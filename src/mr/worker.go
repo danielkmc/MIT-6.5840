@@ -34,61 +34,153 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+func mapTask(mapf func(string, string) []KeyValue) bool {
+	reply := CallMapTask()
+	filename := reply.Filename
+	// If provided a filename, proceed
+	if filename != "" {
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Fatalf("cannot read %v", filename)
+		}
+		err = file.Close()
+		if err != nil {
+			log.Fatalf("error closing file %v", filename)
+		}
+		kva := mapf(filename, string(content))
+
+		sort.Sort(ByKey(kva))
+		// create intermediary files
+		encoders := make([]*json.Encoder, reply.NReduce)
+		intermediates := make([]string, reply.NReduce)
+		intermediatesFD := []*os.File{}
+		parentDir, err := ioutil.TempDir("./", "tmp-intermediates")
+		if err != nil {
+			log.Fatal("error creating temporary directory for intermediates")
+		}
+
+		defer os.RemoveAll(parentDir)
+
+		for i := 0; i < reply.NReduce; i++ {
+			oname := fmt.Sprintf("mr-%v-%v.*", reply.TaskNumber, i)
+			ofile, err := ioutil.TempFile(parentDir, oname)
+			intermediates[i] = ofile.Name()
+			if err != nil {
+				log.Fatalf("error creating intermediate tempfile %v", oname)
+			}
+			encoders[i] = json.NewEncoder(ofile)
+			intermediatesFD = append(intermediatesFD, ofile)
+		}
+		// write to the intermediate file now
+		// read the key, values in
+		for _, kv := range kva {
+			reduceTask := ihash(kv.Key) % reply.NReduce
+			err := encoders[reduceTask].Encode(&kv)
+			if err != nil {
+				log.Fatalf("error encoding KeyValue for intermediate %v", reduceTask)
+			}
+		}
+		for _, file := range intermediatesFD {
+			err := file.Close()
+			if err != nil {
+				log.Fatalf("error closing intermediate file %v", file.Name())
+			}
+		}
+		// store intermediates
+		CallStoreIntermediateFiles(reply.TaskNumber, intermediates)
+	} else if reply.RemainingTasks != 0 && filename == "" {
+		// Remaining tasks are all being processed by other workers
+		// Stay on standby incase map tasks are freed
+		time.Sleep(time.Duration(10) * time.Second)
+	} else if reply.RemainingTasks == 0 {
+		return true
+	}
+	return false
+}
+
+func reduceTask(reducef func(string, []string) string) bool {
+
+	reply := CallGetReduceTasks()
+	if reply.TaskNumber == -1 {
+		time.Sleep(time.Duration(10) * time.Second)
+	} else if reply.RemainingTasks == 0 {
+		// no more tasks
+		return true
+	} else {
+		// read intermediary files (should be in sorted order)
+		intermediate := []KeyValue{}
+		for _, filename := range reply.IntermediateFiles {
+			file, err := os.Open(filename)
+			if err != nil {
+				log.Fatalf("cannot open intermediate file %v", filename)
+			}
+
+			// get decoder
+			dec := json.NewDecoder(file)
+			for {
+				var kv KeyValue
+				if err := dec.Decode(&kv); err != nil {
+					break
+				}
+				intermediate = append(intermediate, kv)
+			}
+			err = file.Close()
+			if err != nil {
+				log.Fatalf("error closing file %v", filename)
+			}
+		}
+		sort.Sort(ByKey(intermediate))
+		parentDir, err := ioutil.TempDir("./", "tmp-reduce")
+		if err != nil {
+			log.Fatalf("error creating reduce temporary directory")
+		}
+
+		defer os.RemoveAll(parentDir)
+
+		oname := fmt.Sprintf("mr-out-%v.*", reply.TaskNumber)
+		ofile, err := ioutil.TempFile(parentDir, oname)
+		if err != nil {
+			log.Fatalf("error creating reduce tmpfile %v", oname)
+		}
+
+		// call Reduce on each distinct key in intermediate[],
+		// and print the result to mr-out-0.
+		//
+		i := 0
+		for i < len(intermediate) {
+			j := i + 1
+			for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+				j++
+			}
+			values := []string{}
+			for k := i; k < j; k++ {
+				values = append(values, intermediate[k].Value)
+			}
+			output := reducef(intermediate[i].Key, values)
+			// this is the correct format for each line of Reduce output.
+			fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+			i = j
+		}
+		err = ofile.Close()
+		if err != nil {
+			log.Fatalf("error closing reduce tmpfile %v", oname)
+		}
+
+		CallCompleteReduceTask(reply.TaskNumber, ofile.Name())
+	}
+	return false
+}
+
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	for {
-		startTime := time.Now()
-		reply := CallMapTask()
-		filename := reply.Filename
-		// If provided a filename, proceed
-		if filename != "" {
-			file, err := os.Open(filename)
-			if err != nil {
-				log.Fatalf("cannot open %v", filename)
-			}
-			content, err := ioutil.ReadAll(file)
-			if err != nil {
-				log.Fatalf("cannot read %v", filename)
-			}
-			file.Close()
-			kva := mapf(filename, string(content))
-
-			sort.Sort(ByKey(kva))
-			// create intermediary files
-			encoders := make([]*json.Encoder, reply.NReduce)
-			intermediates := make([]string, reply.NReduce)
-			for i := 0; i < reply.NReduce; i++ {
-				oname := fmt.Sprintf("mr-%v-%v", reply.TaskNumber, i)
-				intermediates[i] = oname
-				ofile, err := os.Create(oname)
-				if err != nil {
-					log.Fatalf("error creating intermediate file %v", oname)
-				}
-				encoders[i] = json.NewEncoder(ofile)
-			}
-			// write to the intermediate file now
-			// read the key, values in
-			for _, kv := range kva {
-				reduceTask := ihash(kv.Key) % reply.NReduce
-				err := encoders[reduceTask].Encode(&kv)
-				if err != nil {
-					log.Fatalf("error encoding KeyValue for intermediate %v", reduceTask)
-				}
-			}
-			// store intermediates
-			CallStoreIntermediateFiles(reply.TaskNumber, intermediates)
-		}
-
-		// only when the task count is decremented by completed tasks recognized by the coordinator will this break
-		if reply.RemainingTasks != 0 && filename == "" {
-			endTime := time.Now()
-			if duration := int64(startTime.Sub(endTime).Seconds()); duration < 10 {
-				sleepTime := time.Duration(10 - duration)
-				time.Sleep(sleepTime * time.Second)
-			}
-		} else if reply.RemainingTasks == 0 {
+		if mapTask(mapf) {
 			break
 		}
 	}
@@ -96,63 +188,9 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Get reduce task if there are no more map tasks
 	for {
 		// keep getting reduce tasks while there are still reduce tasks
-		reply := CallGetReduceTasks()
-		if reply.TaskNumber == -1 {
-			time.Sleep(time.Duration(10) * time.Second)
-		} else if reply.RemainingTasks == 0 {
-			// no more tasks
+		if reduceTask(reducef) {
 			break
-		} else {
-			// read intermediary files (should be in sorted order)
-			intermediate := []KeyValue{}
-			for _, filename := range reply.IntermediateFiles {
-				file, err := os.Open(filename)
-
-				if err != nil {
-					log.Fatalf("cannot open intermediate file %v", filename)
-				}
-
-				// get decoder
-				dec := json.NewDecoder(file)
-				for {
-					var kv KeyValue
-					if err := dec.Decode(&kv); err != nil {
-						break
-					}
-					intermediate = append(intermediate, kv)
-				}
-			}
-			sort.Sort(ByKey(intermediate))
-			oname := fmt.Sprintf("mr-out-%v", reply.TaskNumber)
-			ofile, _ := os.Create(oname)
-
-			//
-			// call Reduce on each distinct key in intermediate[],
-			// and print the result to mr-out-0.
-			//
-			i := 0
-			for i < len(intermediate) {
-				j := i + 1
-				for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-					j++
-				}
-				values := []string{}
-				for k := i; k < j; k++ {
-					values = append(values, intermediate[k].Value)
-				}
-				output := reducef(intermediate[i].Key, values)
-
-				// this is the correct format for each line of Reduce output.
-				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-
-				i = j
-			}
-			ofile.Close()
-
-			CallCompleteReduceTask(reply.TaskNumber)
-
 		}
-
 	}
 	// Your worker implementation here.
 
@@ -211,7 +249,6 @@ func CallStoreIntermediateFiles(task int, intermediates []string) IntermediateRe
 	args := IntermediateArgs{}
 	args.IntermediaryFiles = intermediates
 	args.TaskNumber = task
-
 	reply := IntermediateReply{}
 
 	ok := call("Coordinator.StoreIntermediateFiles", &args, &reply)
@@ -238,9 +275,10 @@ func CallGetReduceTasks() ReduceTaskReply {
 	return reply
 }
 
-func CallCompleteReduceTask(taskNumber int) {
+func CallCompleteReduceTask(taskNumber int, tmpfile string) {
 	args := ReduceCompletionArgs{}
 	args.TaskNumber = taskNumber
+	args.ReduceFilename = tmpfile
 	reply := ReduceCompletionReply{}
 
 	ok := call("Coordinator.CompleteReduceTask", &args, &reply)

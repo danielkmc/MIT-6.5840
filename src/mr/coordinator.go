@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -66,7 +67,15 @@ func (c *Coordinator) StoreIntermediateFiles(args *IntermediateArgs, reply *Inte
 	if !c.MapBool[task] {
 		// sorted by reduce task, ascending
 		for i, filename := range args.IntermediaryFiles {
-			c.IntermediaryFiles[i] = append(c.IntermediaryFiles[i], filename)
+			// rename files
+			name := strings.Split(filename, "/")[2]
+			dotSplitIndex := strings.LastIndex(name, ".")
+			newpath := name[:dotSplitIndex]
+			err := os.Rename(filename, newpath)
+			if err != nil {
+				log.Fatalf("error renaming temporary intermediate file at: %v", filename)
+			}
+			c.IntermediaryFiles[i] = append(c.IntermediaryFiles[i], newpath)
 		}
 		c.MapBool[task] = true
 		c.remainingMapTasks -= 1
@@ -116,6 +125,10 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 func (c *Coordinator) CompleteReduceTask(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
 	c.reduceMu.Lock()
 	if !c.ReduceBool[args.TaskNumber] {
+		filename := strings.Split(args.ReduceFilename, "/")[2]
+		i := strings.LastIndex(filename, ".")
+		newpath := filename[:i]
+		os.Rename(args.ReduceFilename, newpath)
 		c.ReduceBool[args.TaskNumber] = true
 		c.remainingReduceTasks -= 1
 	}
@@ -150,7 +163,7 @@ func (c *Coordinator) Done() bool {
 	maptasksremaining := 0
 	for inputKey, status := range c.MapBool {
 		if !status {
-			morethan10 := time.Now().Sub(c.MapStartTimes[inputKey]).Seconds() > 10
+			morethan10 := time.Since(c.MapStartTimes[inputKey]).Seconds() > 10
 			if morethan10 {
 				// Allow reissue of this time
 				c.MapStartTimes[inputKey] = time.Time{}
@@ -167,7 +180,7 @@ func (c *Coordinator) Done() bool {
 	reducetasksremaining := 0
 	for n, status := range c.ReduceBool {
 		if !status {
-			morethan10 := time.Now().Sub(c.ReduceStartTimes[n]).Seconds() > 10
+			morethan10 := time.Since(c.ReduceStartTimes[n]).Seconds() > 10
 			if morethan10 {
 				// Allow reissue of this time
 				c.ReduceStartTimes[n] = time.Time{}
