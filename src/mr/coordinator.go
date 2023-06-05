@@ -91,6 +91,7 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 
 	if len(possibletasks) == 0 {
 		// nil indicates that there are no possibletasks since intermediate files are still being stored
+		reply.TaskNumber = -1
 		return nil
 	}
 	// Similar to GetMapTask
@@ -114,12 +115,12 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 }
 
 func (c *Coordinator) CompleteReduceTask(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
-	c.reduceMu.Lock()
 	if !c.ReduceBool[args.TaskNumber] {
+		c.reduceMu.Lock()
 		c.ReduceBool[args.TaskNumber] = true
 		c.remainingReduceTasks -= 1
+		c.reduceMu.Unlock()
 	}
-	c.reduceMu.Unlock()
 	return nil
 }
 

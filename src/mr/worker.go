@@ -34,10 +34,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func mapTask(reply MapTaskReply) bool {
-	// Performs file read, map task,
-}
-
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
@@ -99,7 +95,66 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 
 	// Get reduce task if there are no more map tasks
+	for true {
+		// keep getting reduce tasks while there are still reduce tasks
+		reply := CallGetReduceTasks()
+		if reply.TaskNumber == -1 {
+			time.Sleep(time.Duration(10) * time.Second)
+		} else if reply.RemainingTasks == 0 {
+			// no more tasks
+			break
+		} else {
+			// read intermediary files (should be in sorted order)
+			intermediate := []KeyValue{}
+			for _, filename := range reply.IntermediateFiles {
+				file, err := os.Open(filename)
 
+				if err != nil {
+					log.Fatalf("cannot open intermediate file %v", filename)
+				}
+
+				// get decoder
+				dec := json.NewDecoder(file)
+				for {
+					var kv KeyValue
+					if err := dec.Decode(&kv); err != nil {
+						log.Fatalf("error reading key values")
+						break
+					}
+					intermediate = append(intermediate, kv)
+				}
+			}
+			sort.Sort(ByKey(intermediate))
+			oname := fmt.Sprintf("mr-out-%v", reply.TaskNumber)
+			ofile, _ := os.Create(oname)
+
+			//
+			// call Reduce on each distinct key in intermediate[],
+			// and print the result to mr-out-0.
+			//
+			i := 0
+			for i < len(intermediate) {
+				j := i + 1
+				for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, intermediate[k].Value)
+				}
+				output := reducef(intermediate[i].Key, values)
+
+				// this is the correct format for each line of Reduce output.
+				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+				i = j
+			}
+			ofile.Close()
+
+			CallCompleteReduceTask(reply.TaskNumber)
+		}
+
+	}
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the coordinator.
@@ -107,6 +162,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 }
 
+/*
 // example function to show how to make an RPC call to the coordinator.
 //
 // the RPC argument and reply types are defined in rpc.go.
@@ -133,6 +189,7 @@ func CallExample() {
 		fmt.Printf("call failed!\n")
 	}
 }
+*/
 
 func CallMapTask() MapTaskReply {
 	// retrieves map task
@@ -160,10 +217,40 @@ func CallStoreIntermediateFiles(task int, intermediates []string) IntermediateRe
 
 	ok := call("Coordinator.StoreIntermediateFiles", &args, &reply)
 	if ok {
-		fmt.Printf("call success!\n")
+		fmt.Printf("call StoreIntermediateFiles success!\n")
 	} else {
-		fmt.Printf("call failed!\n")
+		fmt.Printf("call StoreIntermediateFiles failed!\n")
 	}
+
+	return reply
+}
+
+func CallGetReduceTasks() ReduceTaskReply {
+	args := ReduceTaskArgs{}
+	reply := ReduceTaskReply{}
+
+	ok := call("Coordinator.GetReduceTask", &args, &reply)
+	if ok {
+		fmt.Printf("call GetReduceTask success!\n")
+	} else {
+		fmt.Printf("call GetReduceTask failed!\n")
+	}
+
+	return reply
+}
+
+func CallCompleteReduceTask(taskNumber int) {
+	args := ReduceCompletionArgs{}
+	args.TaskNumber = taskNumber
+	reply := ReduceCompletionReply{}
+
+	ok := call("Coordinator.CompleteReduceTask", &args, &reply)
+	if ok {
+		fmt.Printf("call CompleteReduceTask success!\n")
+	} else {
+		fmt.Printf("call CompleteReduceTask failed!\n")
+	}
+
 }
 
 // send an RPC request to the coordinator, wait for the response.
