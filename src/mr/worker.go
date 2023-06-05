@@ -38,7 +38,7 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	for true {
+	for {
 		startTime := time.Now()
 		reply := CallMapTask()
 		filename := reply.Filename
@@ -60,7 +60,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			encoders := make([]*json.Encoder, reply.NReduce)
 			intermediates := make([]string, reply.NReduce)
 			for i := 0; i < reply.NReduce; i++ {
-				oname := fmt.Sprintf("mr-out-%v-%v", reply.TaskNumber, i)
+				oname := fmt.Sprintf("mr-%v-%v", reply.TaskNumber, i)
 				intermediates[i] = oname
 				ofile, err := os.Create(oname)
 				if err != nil {
@@ -81,21 +81,20 @@ func Worker(mapf func(string, string) []KeyValue,
 			CallStoreIntermediateFiles(reply.TaskNumber, intermediates)
 		}
 
-		if reply.RemainingTasks != 0 {
+		// only when the task count is decremented by completed tasks recognized by the coordinator will this break
+		if reply.RemainingTasks != 0 && filename == "" {
 			endTime := time.Now()
-			if duration := int(startTime.Sub(endTime).Seconds()); duration < 10 {
-				sleepTime := time.Duration(10-duration) * time.Second
-				time.Sleep(sleepTime)
-			} else {
-				continue
+			if duration := int64(startTime.Sub(endTime).Seconds()); duration < 10 {
+				sleepTime := time.Duration(10 - duration)
+				time.Sleep(sleepTime * time.Second)
 			}
-		} else {
+		} else if reply.RemainingTasks == 0 {
 			break
 		}
 	}
 
 	// Get reduce task if there are no more map tasks
-	for true {
+	for {
 		// keep getting reduce tasks while there are still reduce tasks
 		reply := CallGetReduceTasks()
 		if reply.TaskNumber == -1 {
@@ -118,7 +117,6 @@ func Worker(mapf func(string, string) []KeyValue,
 				for {
 					var kv KeyValue
 					if err := dec.Decode(&kv); err != nil {
-						log.Fatalf("error reading key values")
 						break
 					}
 					intermediate = append(intermediate, kv)
@@ -152,6 +150,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			ofile.Close()
 
 			CallCompleteReduceTask(reply.TaskNumber)
+
 		}
 
 	}
@@ -200,7 +199,7 @@ func CallMapTask() MapTaskReply {
 
 	ok := call("Coordinator.GetMapTask", &args, &reply)
 	if ok {
-		fmt.Printf("reply.Filename %v\n", reply.Filename)
+		// fmt.Printf("reply.Filename %v\n", reply.Filename)
 	} else {
 		fmt.Printf("call failed!\n")
 	}
@@ -217,7 +216,7 @@ func CallStoreIntermediateFiles(task int, intermediates []string) IntermediateRe
 
 	ok := call("Coordinator.StoreIntermediateFiles", &args, &reply)
 	if ok {
-		fmt.Printf("call StoreIntermediateFiles success!\n")
+		// fmt.Printf("call StoreIntermediateFiles success!\n")
 	} else {
 		fmt.Printf("call StoreIntermediateFiles failed!\n")
 	}
@@ -231,7 +230,7 @@ func CallGetReduceTasks() ReduceTaskReply {
 
 	ok := call("Coordinator.GetReduceTask", &args, &reply)
 	if ok {
-		fmt.Printf("call GetReduceTask success!\n")
+		// fmt.Printf("call GetReduceTask success!\n")
 	} else {
 		fmt.Printf("call GetReduceTask failed!\n")
 	}
@@ -246,7 +245,7 @@ func CallCompleteReduceTask(taskNumber int) {
 
 	ok := call("Coordinator.CompleteReduceTask", &args, &reply)
 	if ok {
-		fmt.Printf("call CompleteReduceTask success!\n")
+		// fmt.Printf("call CompleteReduceTask success!\n")
 	} else {
 		fmt.Printf("call CompleteReduceTask failed!\n")
 	}

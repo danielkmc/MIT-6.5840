@@ -52,6 +52,7 @@ func (c *Coordinator) GetMapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 	c.mapMu.Unlock()
 
 	c.intermediateMu.Lock()
+	// give number of map tasks that aren't complete
 	reply.RemainingTasks = c.remainingMapTasks
 	c.intermediateMu.Unlock()
 	reply.NReduce = c.nReduce
@@ -94,11 +95,10 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 		reply.TaskNumber = -1
 		return nil
 	}
-	// Similar to GetMapTask
-	// This function will only give out tasks if the start time is 0
-	// The start times are reset to 0 by the done() function if it doesn't find a ReduceBool value set to true after 10 seconds
-	// The final output files are rewritten each time a reduce task completes to ensure idempotent behavior
+	// There are tasks that can be given out
 	c.reduceMu.Lock()
+
+	reply.RemainingTasks = c.remainingReduceTasks
 	for i := range possibletasks {
 		if c.ReduceStartTimes[i].IsZero() {
 			c.ReduceStartTimes[i] = time.Now()
@@ -108,19 +108,19 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 			return nil
 		}
 	}
-	reply.RemainingTasks = c.remainingReduceTasks
 	c.reduceMu.Unlock()
 
 	return nil
 }
 
 func (c *Coordinator) CompleteReduceTask(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
+	c.reduceMu.Lock()
 	if !c.ReduceBool[args.TaskNumber] {
-		c.reduceMu.Lock()
 		c.ReduceBool[args.TaskNumber] = true
 		c.remainingReduceTasks -= 1
-		c.reduceMu.Unlock()
 	}
+	c.reduceMu.Unlock()
+
 	return nil
 }
 
@@ -154,7 +154,7 @@ func (c *Coordinator) Done() bool {
 			if morethan10 {
 				// Allow reissue of this time
 				c.MapStartTimes[inputKey] = time.Time{}
-				log.Printf("[COORDINATOR] Reset start time for map task: %v. Difference: %v\n", inputKey, morethan10)
+				// log.Printf("[COORDINATOR] Reset start time for map task: %v. Difference: %v\n", inputKey, morethan10)
 			}
 			maptasksremaining += 1
 		}
@@ -171,14 +171,14 @@ func (c *Coordinator) Done() bool {
 			if morethan10 {
 				// Allow reissue of this time
 				c.ReduceStartTimes[n] = time.Time{}
-				log.Printf("[COORDINATOR] Reset start time for reduce task: %v. Difference: %v\n", n, morethan10)
+				// log.Printf("[COORDINATOR] Reset start time for reduce task: %v. Difference: %v\n", n, morethan10)
 			}
 			reducetasksremaining += 1
 		}
 	}
 	c.reduceMu.Unlock()
 
-	log.Printf("[COORDINATOR] Map tasks remaining: %v | Reduce tasks remaining: %v\n", maptasksremaining, reducetasksremaining)
+	// log.Printf("[COORDINATOR] Map tasks remaining: %v | Reduce tasks remaining: %v\n", maptasksremaining, reducetasksremaining)
 	if reducetasksremaining == 0 {
 		ret = true
 	}
@@ -198,9 +198,14 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.remainingReduceTasks = nReduce
 
 	// Initialize nReduce number of intermediary file lists
-	for i := 1; i <= nReduce; i++ {
-		c.IntermediaryFiles[i] = make([]string, 0)
+	for i := 0; i < nReduce; i++ {
+		c.IntermediaryFiles = append(c.IntermediaryFiles, []string{})
 	}
+	c.ReduceBool = make([]bool, nReduce)
+
+	c.MapBool = make([]bool, len(files))
+	c.MapStartTimes = make([]time.Time, len(files))
+	c.ReduceStartTimes = make([]time.Time, nReduce)
 
 	c.server()
 	return &c
