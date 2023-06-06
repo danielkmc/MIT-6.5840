@@ -104,16 +104,19 @@ func mapTask(mapf func(string, string) []KeyValue) bool {
 }
 
 func reduceTask(reducef func(string, []string) string) bool {
-
-	reply := CallGetReduceTasks()
-	if reply.TaskNumber == -1 {
-		time.Sleep(time.Duration(500) * time.Millisecond)
-	} else if reply.RemainingTasks == 0 {
-		// no more tasks
+	reply, ok := CallGetReduceTasks()
+	if !ok {
+		// Can't reach Coordinator
 		return true
+	}
+	if reply.RemainingTasks == 0 {
+		return true
+	} else if reply.TaskNumber == -1 {
+		time.Sleep(time.Duration(500) * time.Millisecond)
 	} else {
 		// read intermediary files (should be in sorted order)
 		intermediate := []KeyValue{}
+		// fmt.Printf("task %v | remaining tasks: %v | intermediate files %v", reply.TaskNumber, reply.RemainingTasks, reply.IntermediateFiles)
 		for _, filename := range reply.IntermediateFiles {
 			file, err := os.Open(filename)
 			if err != nil {
@@ -152,7 +155,7 @@ func reduceTask(reducef func(string, []string) string) bool {
 		// and print the result to mr-out-0.
 		//
 		i := 0
-		fmt.Printf("working on %v\n", reply.TaskNumber)
+		// fmt.Printf("working on %v, nfiles: %v\n", reply.TaskNumber, len(intermediate))
 		for i < len(intermediate) {
 			j := i + 1
 			for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
@@ -162,7 +165,7 @@ func reduceTask(reducef func(string, []string) string) bool {
 			for k := i; k < j; k++ {
 				values = append(values, intermediate[k].Value)
 			}
-			fmt.Printf("%v reduce function %v %v\n", reply.TaskNumber, intermediate[i].Key, values)
+			// fmt.Printf("%v reduce function %v %v\n", reply.TaskNumber, intermediate[i].Key, values)
 			output := reducef(intermediate[i].Key, values)
 			// this is the correct format for each line of Reduce output.
 			fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
@@ -265,7 +268,7 @@ func CallStoreIntermediateFiles(task int, intermediates []string) IntermediateRe
 	return reply
 }
 
-func CallGetReduceTasks() ReduceTaskReply {
+func CallGetReduceTasks() (ReduceTaskReply, bool) {
 	args := ReduceTaskArgs{}
 	reply := ReduceTaskReply{}
 
@@ -274,7 +277,7 @@ func CallGetReduceTasks() ReduceTaskReply {
 		fmt.Printf("call GetReduceTask failed!\n")
 	}
 
-	return reply
+	return reply, ok
 }
 
 func CallCompleteReduceTask(taskNumber int) bool {

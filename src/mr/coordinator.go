@@ -90,24 +90,23 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 	// Requirements:
 	// 1. All intermediate files are present
 	// 2. ReduceStarttime IsZero
+	reply.TaskNumber = -1
 	c.reduceMu.Lock()
 	if c.remainingMapTasks != 0 {
 		// nil indicates that there are no possibletasks since intermediate files are still being stored
-		c.reduceMu.Unlock()
-		reply.TaskNumber = -1
-		return nil
-	}
-	c.reduceMu.Unlock()
-	// There are tasks that can be given out
-	c.reduceMu.Lock()
-	reply.RemainingTasks = c.remainingReduceTasks
-	for i, status := range c.ReduceBool {
-		if !status && c.ReduceStartTimes[i].IsZero() {
-			c.ReduceStartTimes[i] = time.Now()
-			reply.IntermediateFiles = c.IntermediaryFiles[i]
-			reply.TaskNumber = i
-			// fmt.Printf("Giving task %v\n", i)
-			break
+
+	} else if c.remainingReduceTasks == 0 {
+		reply.RemainingTasks = c.remainingReduceTasks
+	} else {
+		// There are tasks that can be given out
+		reply.RemainingTasks = c.remainingReduceTasks
+		for i, status := range c.ReduceBool {
+			if !status && c.ReduceStartTimes[i].IsZero() {
+				c.ReduceStartTimes[i] = time.Now()
+				reply.IntermediateFiles = append(reply.IntermediateFiles, c.IntermediaryFiles[i]...)
+				reply.TaskNumber = i
+				break
+			}
 		}
 	}
 	c.reduceMu.Unlock()
