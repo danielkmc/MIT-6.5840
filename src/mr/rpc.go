@@ -54,8 +54,7 @@ type ReduceTaskReply struct {
 
 // Used to indicate reduce task completion
 type ReduceCompletionArgs struct {
-	TaskNumber     int
-	ReduceFilename string
+	TaskNumber int
 }
 
 type ReduceCompletionReply struct{}

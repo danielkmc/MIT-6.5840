@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -95,7 +96,7 @@ func mapTask(mapf func(string, string) []KeyValue) bool {
 	} else if reply.RemainingTasks != 0 && filename == "" {
 		// Remaining tasks are all being processed by other workers
 		// Stay on standby incase map tasks are freed
-		time.Sleep(time.Duration(10) * time.Second)
+		time.Sleep(time.Duration(500) * time.Millisecond)
 	} else if reply.RemainingTasks == 0 {
 		return true
 	}
@@ -106,7 +107,7 @@ func reduceTask(reducef func(string, []string) string) bool {
 
 	reply := CallGetReduceTasks()
 	if reply.TaskNumber == -1 {
-		time.Sleep(time.Duration(10) * time.Second)
+		time.Sleep(time.Duration(500) * time.Millisecond)
 	} else if reply.RemainingTasks == 0 {
 		// no more tasks
 		return true
@@ -151,6 +152,7 @@ func reduceTask(reducef func(string, []string) string) bool {
 		// and print the result to mr-out-0.
 		//
 		i := 0
+		fmt.Printf("working on %v\n", reply.TaskNumber)
 		for i < len(intermediate) {
 			j := i + 1
 			for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
@@ -160,6 +162,7 @@ func reduceTask(reducef func(string, []string) string) bool {
 			for k := i; k < j; k++ {
 				values = append(values, intermediate[k].Value)
 			}
+			fmt.Printf("%v reduce function %v %v\n", reply.TaskNumber, intermediate[i].Key, values)
 			output := reducef(intermediate[i].Key, values)
 			// this is the correct format for each line of Reduce output.
 			fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
@@ -170,7 +173,13 @@ func reduceTask(reducef func(string, []string) string) bool {
 			log.Fatalf("error closing reduce tmpfile %v", oname)
 		}
 
-		CallCompleteReduceTask(reply.TaskNumber, ofile.Name())
+		filename := strings.Split(ofile.Name(), "/")[2]
+		i = strings.LastIndex(filename, ".")
+		newpath := filename[:i]
+		os.Rename(ofile.Name(), newpath)
+		if !CallCompleteReduceTask(reply.TaskNumber) {
+			return false
+		}
 	}
 	return false
 }
@@ -232,13 +241,10 @@ func CallMapTask() MapTaskReply {
 	// retrieves map task
 	// returns remaining mapping tasks left
 	args := MapTaskArgs{}
-
 	reply := MapTaskReply{}
 
 	ok := call("Coordinator.GetMapTask", &args, &reply)
-	if ok {
-		// fmt.Printf("reply.Filename %v\n", reply.Filename)
-	} else {
+	if !ok {
 		fmt.Printf("call failed!\n")
 	}
 	return reply
@@ -252,9 +258,7 @@ func CallStoreIntermediateFiles(task int, intermediates []string) IntermediateRe
 	reply := IntermediateReply{}
 
 	ok := call("Coordinator.StoreIntermediateFiles", &args, &reply)
-	if ok {
-		// fmt.Printf("call StoreIntermediateFiles success!\n")
-	} else {
+	if !ok {
 		fmt.Printf("call StoreIntermediateFiles failed!\n")
 	}
 
@@ -266,28 +270,23 @@ func CallGetReduceTasks() ReduceTaskReply {
 	reply := ReduceTaskReply{}
 
 	ok := call("Coordinator.GetReduceTask", &args, &reply)
-	if ok {
-		// fmt.Printf("call GetReduceTask success!\n")
-	} else {
+	if !ok {
 		fmt.Printf("call GetReduceTask failed!\n")
 	}
 
 	return reply
 }
 
-func CallCompleteReduceTask(taskNumber int, tmpfile string) {
+func CallCompleteReduceTask(taskNumber int) bool {
 	args := ReduceCompletionArgs{}
 	args.TaskNumber = taskNumber
-	args.ReduceFilename = tmpfile
 	reply := ReduceCompletionReply{}
 
 	ok := call("Coordinator.CompleteReduceTask", &args, &reply)
-	if ok {
-		// fmt.Printf("call CompleteReduceTask success!\n")
-	} else {
+	if !ok {
 		fmt.Printf("call CompleteReduceTask failed!\n")
 	}
-
+	return ok
 }
 
 // send an RPC request to the coordinator, wait for the response.

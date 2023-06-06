@@ -90,31 +90,24 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 	// Requirements:
 	// 1. All intermediate files are present
 	// 2. ReduceStarttime IsZero
-	var possibletasks []int
-	c.intermediateMu.Lock()
-	for nTask, intermediates := range c.IntermediaryFiles {
-		if len(intermediates) == c.nMap {
-			possibletasks = append(possibletasks, nTask)
-		}
-	}
-	c.intermediateMu.Unlock()
-
-	if len(possibletasks) == 0 {
+	c.reduceMu.Lock()
+	if c.remainingMapTasks != 0 {
 		// nil indicates that there are no possibletasks since intermediate files are still being stored
+		c.reduceMu.Unlock()
 		reply.TaskNumber = -1
 		return nil
 	}
+	c.reduceMu.Unlock()
 	// There are tasks that can be given out
 	c.reduceMu.Lock()
-
 	reply.RemainingTasks = c.remainingReduceTasks
-	for i := range possibletasks {
-		if c.ReduceStartTimes[i].IsZero() {
+	for i, status := range c.ReduceBool {
+		if !status && c.ReduceStartTimes[i].IsZero() {
 			c.ReduceStartTimes[i] = time.Now()
 			reply.IntermediateFiles = c.IntermediaryFiles[i]
 			reply.TaskNumber = i
-			c.reduceMu.Unlock()
-			return nil
+			// fmt.Printf("Giving task %v\n", i)
+			break
 		}
 	}
 	c.reduceMu.Unlock()
@@ -124,14 +117,9 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 
 func (c *Coordinator) CompleteReduceTask(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
 	c.reduceMu.Lock()
-	if !c.ReduceBool[args.TaskNumber] {
-		filename := strings.Split(args.ReduceFilename, "/")[2]
-		i := strings.LastIndex(filename, ".")
-		newpath := filename[:i]
-		os.Rename(args.ReduceFilename, newpath)
-		c.ReduceBool[args.TaskNumber] = true
-		c.remainingReduceTasks -= 1
-	}
+	// fmt.Printf("completed task %v!\n", args.TaskNumber)
+	c.ReduceBool[args.TaskNumber] = true
+	c.remainingReduceTasks -= 1
 	c.reduceMu.Unlock()
 
 	return nil
@@ -160,16 +148,13 @@ func (c *Coordinator) Done() bool {
 	// Check if map times need to be reset
 	c.mapMu.Lock()
 	c.intermediateMu.Lock()
-	maptasksremaining := 0
-	for inputKey, status := range c.MapBool {
-		if !status {
-			morethan10 := time.Since(c.MapStartTimes[inputKey]).Seconds() > 10
+	for i, status := range c.MapBool {
+		if !status && !c.MapStartTimes[i].IsZero() {
+			morethan10 := time.Since(c.MapStartTimes[i]).Seconds() > 10
 			if morethan10 {
 				// Allow reissue of this time
-				c.MapStartTimes[inputKey] = time.Time{}
-				// log.Printf("[COORDINATOR] Reset start time for map task: %v. Difference: %v\n", inputKey, morethan10)
+				c.MapStartTimes[i] = time.Time{}
 			}
-			maptasksremaining += 1
 		}
 	}
 	c.mapMu.Unlock()
@@ -177,24 +162,20 @@ func (c *Coordinator) Done() bool {
 
 	// check if reduce times need to be reset
 	c.reduceMu.Lock()
-	reducetasksremaining := 0
-	for n, status := range c.ReduceBool {
-		if !status {
-			morethan10 := time.Since(c.ReduceStartTimes[n]).Seconds() > 10
+	for i, status := range c.ReduceBool {
+		if !status && !c.ReduceStartTimes[i].IsZero() {
+			morethan10 := time.Since(c.ReduceStartTimes[i]).Seconds() > 10
 			if morethan10 {
-				// Allow reissue of this time
-				c.ReduceStartTimes[n] = time.Time{}
-				// log.Printf("[COORDINATOR] Reset start time for reduce task: %v. Difference: %v\n", n, morethan10)
+				c.ReduceStartTimes[i] = time.Time{}
+				// fmt.Printf("Resetting time for reduce job %v\n", i)
 			}
-			reducetasksremaining += 1
 		}
 	}
-	c.reduceMu.Unlock()
 
-	// log.Printf("[COORDINATOR] Map tasks remaining: %v | Reduce tasks remaining: %v\n", maptasksremaining, reducetasksremaining)
-	if reducetasksremaining == 0 {
+	if c.remainingReduceTasks == 0 {
 		ret = true
 	}
+	c.reduceMu.Unlock()
 
 	return ret
 }
@@ -210,12 +191,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.remainingMapTasks = c.nMap
 	c.remainingReduceTasks = nReduce
 
-	// Initialize nReduce number of intermediary file lists
-	for i := 0; i < nReduce; i++ {
-		c.IntermediaryFiles = append(c.IntermediaryFiles, []string{})
-	}
+	c.IntermediaryFiles = make([][]string, nReduce)
 	c.ReduceBool = make([]bool, nReduce)
-
 	c.MapBool = make([]bool, len(files))
 	c.MapStartTimes = make([]time.Time, len(files))
 	c.ReduceStartTimes = make([]time.Time, nReduce)
