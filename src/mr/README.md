@@ -85,14 +85,78 @@ This function is called every second by ```src/main/mrcoordinator.go``` in the m
 ### **worker.go**
 
 The worker implementation contains the code for reading in files for the map and reduce functions. **Worker()** performs two loops: one to perform the mapping and storage of intermediates, and the other to read in the intermediates, perform the reduce task, and store the results. Both loops: 
-1. exit
+1. Exit
     1. if the reply from the Coordinator on request for a map/reduce task responds with 0 remaining tasks left
     2. if the Coordinator is unreachable. 
  2. Continue executing
     1. if there is a task provided
     2. if there are tasks executing and not completed remaining
        1. In this case, the Worker will sleep for 50 milliseconds to prevent repetitive polling of the Coordinator for work (this could be modified to use a Conditional variable in the Coordinator's response)
+```golang
+func mapTask(mapf func(string, string) []KeyValue) bool {
+	reply := CallMapTask()
+	filename := reply.Filename
+	// If provided a filename, proceed
+	if filename != "" {
+		//...
+		// store intermediates
+		_, ok := CallStoreIntermediateFiles(reply.TaskNumber, intermediates)
+		if !ok {
+			// Can't reach coordinator, exit
+			return true
+		}
 
+	} else if reply.RemainingTasks != 0 && filename == "" {
+		// Remaining tasks are all being processed by other workers
+		// Stay on standby incase map tasks are freed
+		time.Sleep(time.Duration(50) * time.Millisecond)
+		return false
+	} else if reply.RemainingTasks == 0 {
+		return true
+	}
+	return false
+}
+
+func reduceTask(reducef func(string, []string) string) bool {
+	reply, ok := CallGetReduceTasks()
+	if !ok {
+		// Can't reach Coordinator
+		return true
+	}
+	if reply.RemainingTasks == 0 {
+		// Done with all reduce tasks
+		return true
+	} else if reply.TaskNumber == -1 {
+		// there are still reduce tasks remaining but all are assigned
+		time.Sleep(time.Duration(50) * time.Millisecond)
+		return false
+	} else {
+		// read intermediary files (should be in sorted order)
+		//...
+		if !CallCompleteReduceTask(reply.TaskNumber) {
+			// Can't reach coordinator, exit
+			return true
+		}
+	}
+	return false
+}
+
+// main/mrworker.go calls this function.
+func Worker(mapf func(string, string) []KeyValue,
+	reducef func(string, []string) string) {
+
+	for {
+		if mapTask(mapf) {
+			break
+		}
+	}
+	for {
+		if reduceTask(reducef) {
+			break
+		}
+	}
+}
+```
 To ensure fault-tolerance, Workers write to temporary files that only are renamed if
 1. the Coordinator receives the intermediates files from a mapping task
 2. the Worker completes writing reduce output and is considered complete if the Worker is able to communicate to the Coordinator to record completion
