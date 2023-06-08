@@ -92,11 +92,17 @@ func mapTask(mapf func(string, string) []KeyValue) bool {
 			}
 		}
 		// store intermediates
-		CallStoreIntermediateFiles(reply.TaskNumber, intermediates)
+		_, ok := CallStoreIntermediateFiles(reply.TaskNumber, intermediates)
+		if !ok {
+			// Can't reach coordinator, exit
+			return true
+		}
+
 	} else if reply.RemainingTasks != 0 && filename == "" {
 		// Remaining tasks are all being processed by other workers
 		// Stay on standby incase map tasks are freed
 		time.Sleep(time.Duration(50) * time.Millisecond)
+		return false
 	} else if reply.RemainingTasks == 0 {
 		return true
 	}
@@ -110,9 +116,12 @@ func reduceTask(reducef func(string, []string) string) bool {
 		return true
 	}
 	if reply.RemainingTasks == 0 {
+		// Done with all reduce tasks
 		return true
 	} else if reply.TaskNumber == -1 {
-		time.Sleep(time.Duration(500) * time.Millisecond)
+		// there are still reduce tasks remaining but all are assigned
+		time.Sleep(time.Duration(50) * time.Millisecond)
+		return false
 	} else {
 		// read intermediary files (should be in sorted order)
 		intermediate := []KeyValue{}
@@ -175,9 +184,13 @@ func reduceTask(reducef func(string, []string) string) bool {
 		filename := strings.Split(ofile.Name(), "/")[2]
 		i = strings.LastIndex(filename, ".")
 		newpath := filename[:i]
-		os.Rename(ofile.Name(), newpath)
+		err = os.Rename(ofile.Name(), newpath)
+		if err != nil {
+			log.Fatalf("error renaming reduce output %v", ofile.Name())
+		}
 		if !CallCompleteReduceTask(reply.TaskNumber) {
-			return false
+			// Can't reach coordinator, exit
+			return true
 		}
 	}
 	return false
@@ -241,7 +254,7 @@ func CallMapTask() MapTaskReply {
 	return reply
 }
 
-func CallStoreIntermediateFiles(task int, intermediates []string) IntermediateReply {
+func CallStoreIntermediateFiles(task int, intermediates []string) (IntermediateReply, bool) {
 
 	args := IntermediateArgs{}
 	args.IntermediaryFiles = intermediates
@@ -253,7 +266,7 @@ func CallStoreIntermediateFiles(task int, intermediates []string) IntermediateRe
 		fmt.Printf("call StoreIntermediateFiles failed!\n")
 	}
 
-	return reply
+	return reply, ok
 }
 
 func CallGetReduceTasks() (ReduceTaskReply, bool) {

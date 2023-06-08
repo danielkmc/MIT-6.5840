@@ -14,14 +14,14 @@ import (
 type Coordinator struct {
 	// Your definitions here.
 	inputFiles           []string
-	MapStartTimes        []time.Time
-	MapBool              []bool
+	mapStartTimes        []time.Time
+	mapBool              []bool
 	mapMu                sync.Mutex
 	remainingMapTasks    int
-	IntermediaryFiles    [][]string
+	intermediaryFiles    [][]string
 	intermediateMu       sync.Mutex
-	ReduceStartTimes     []time.Time
-	ReduceBool           []bool
+	reduceStartTimes     []time.Time
+	reduceBool           []bool
 	remainingReduceTasks int
 	reduceMu             sync.Mutex
 	nReduce              int
@@ -42,10 +42,10 @@ func (c *Coordinator) GetMapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 
 	c.mapMu.Lock()
 	reply.Filename = ""
-	for i, starttime := range c.MapStartTimes {
+	for i, starttime := range c.mapStartTimes {
 		if starttime.IsZero() {
 			reply.Filename = c.inputFiles[i]
-			c.MapStartTimes[i] = time.Now()
+			c.mapStartTimes[i] = time.Now()
 			reply.TaskNumber = i
 			break
 		}
@@ -64,7 +64,7 @@ func (c *Coordinator) StoreIntermediateFiles(args *IntermediateArgs, reply *Inte
 	// check if we already have intermediate files for the file name that was processed
 	task := args.TaskNumber
 	c.intermediateMu.Lock()
-	if !c.MapBool[task] {
+	if !c.mapBool[task] {
 		// sorted by reduce task, ascending
 		for i, filename := range args.IntermediaryFiles {
 			// rename files
@@ -75,9 +75,9 @@ func (c *Coordinator) StoreIntermediateFiles(args *IntermediateArgs, reply *Inte
 			if err != nil {
 				log.Fatalf("error renaming temporary intermediate file at: %v", filename)
 			}
-			c.IntermediaryFiles[i] = append(c.IntermediaryFiles[i], newpath)
+			c.intermediaryFiles[i] = append(c.intermediaryFiles[i], newpath)
 		}
-		c.MapBool[task] = true
+		c.mapBool[task] = true
 		c.remainingMapTasks -= 1
 	}
 	c.intermediateMu.Unlock()
@@ -92,17 +92,13 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 	// 2. ReduceStarttime IsZero
 	reply.TaskNumber = -1
 	c.reduceMu.Lock()
-	if c.remainingMapTasks != 0 {
-
-	} else if c.remainingReduceTasks == 0 {
-		reply.RemainingTasks = c.remainingReduceTasks
-	} else {
+	reply.RemainingTasks = c.remainingReduceTasks
+	if c.remainingReduceTasks > 0 {
 		// There are tasks that can be given out
-		reply.RemainingTasks = c.remainingReduceTasks
-		for i, status := range c.ReduceBool {
-			if !status && c.ReduceStartTimes[i].IsZero() {
-				c.ReduceStartTimes[i] = time.Now()
-				reply.IntermediateFiles = append(reply.IntermediateFiles, c.IntermediaryFiles[i]...)
+		for i, status := range c.reduceBool {
+			if !status && c.reduceStartTimes[i].IsZero() {
+				c.reduceStartTimes[i] = time.Now()
+				reply.IntermediateFiles = append(reply.IntermediateFiles, c.intermediaryFiles[i]...)
 				reply.TaskNumber = i
 				break
 			}
@@ -116,7 +112,7 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 func (c *Coordinator) CompleteReduceTask(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
 	// Record completion. Worker handles atomic renaming of file since it can overwrite as many times as possible
 	c.reduceMu.Lock()
-	c.ReduceBool[args.TaskNumber] = true
+	c.reduceBool[args.TaskNumber] = true
 	c.remainingReduceTasks -= 1
 	c.reduceMu.Unlock()
 
@@ -146,12 +142,12 @@ func (c *Coordinator) Done() bool {
 	// Check if map times need to be reset
 	c.mapMu.Lock()
 	c.intermediateMu.Lock()
-	for i, status := range c.MapBool {
-		if !status && !c.MapStartTimes[i].IsZero() {
-			morethan10 := time.Since(c.MapStartTimes[i]).Seconds() > 10
+	for i, status := range c.mapBool {
+		if !status && !c.mapStartTimes[i].IsZero() {
+			morethan10 := time.Since(c.mapStartTimes[i]).Seconds() > 10
 			if morethan10 {
 				// Allow reissue of this time
-				c.MapStartTimes[i] = time.Time{}
+				c.mapStartTimes[i] = time.Time{}
 			}
 		}
 	}
@@ -160,11 +156,11 @@ func (c *Coordinator) Done() bool {
 
 	// check if reduce times need to be reset
 	c.reduceMu.Lock()
-	for i, status := range c.ReduceBool {
-		if !status && !c.ReduceStartTimes[i].IsZero() {
-			morethan10 := time.Since(c.ReduceStartTimes[i]).Seconds() > 10
+	for i, status := range c.reduceBool {
+		if !status && !c.reduceStartTimes[i].IsZero() {
+			morethan10 := time.Since(c.reduceStartTimes[i]).Seconds() > 10
 			if morethan10 {
-				c.ReduceStartTimes[i] = time.Time{}
+				c.reduceStartTimes[i] = time.Time{}
 			}
 		}
 	}
@@ -188,11 +184,11 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.remainingMapTasks = c.nMap
 	c.remainingReduceTasks = nReduce
 
-	c.IntermediaryFiles = make([][]string, nReduce)
-	c.ReduceBool = make([]bool, nReduce)
-	c.MapBool = make([]bool, len(files))
-	c.MapStartTimes = make([]time.Time, len(files))
-	c.ReduceStartTimes = make([]time.Time, nReduce)
+	c.intermediaryFiles = make([][]string, nReduce)
+	c.reduceBool = make([]bool, nReduce)
+	c.mapBool = make([]bool, len(files))
+	c.mapStartTimes = make([]time.Time, len(files))
+	c.reduceStartTimes = make([]time.Time, nReduce)
 
 	c.server()
 	return &c
