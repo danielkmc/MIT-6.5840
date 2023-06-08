@@ -82,4 +82,23 @@ This function performs the critical task of checking if assigned tasks by the Co
 This function is called every second by ```src/main/mrcoordinator.go``` in the main thread. 
 
 ---
-### worker.go
+### **worker.go**
+
+The worker implementation contains the code for reading in files for the map and reduce functions. **Worker()** performs two loops: one to perform the mapping and storage of intermediates, and the other to read in the intermediates, perform the reduce task, and store the results. Both loops: 
+1. exit
+    1. if the reply from the Coordinator on request for a map/reduce task responds with 0 remaining tasks left
+    2. if the Coordinator is unreachable. 
+ 2. Continue executing
+    1. if there is a task provided
+    2. if there are tasks executing and not completed remaining
+       1. In this case, the Worker will sleep for 50 milliseconds to prevent repetitive polling of the Coordinator for work (this could be modified to use a Conditional variable in the Coordinator's response)
+
+To ensure fault-tolerance, Workers write to temporary files that only are renamed if
+1. the Coordinator receives the intermediates files from a mapping task
+2. the Worker completes writing reduce output and is considered complete if the Worker is able to communicate to the Coordinator to record completion
+
+These are to follow the specification mentioned in **Section 3.2 - Semantics in the Presence of Failures** of the original MapReduce paper.
+
+For the first case, waiting for the Coordinator to rename the files ensures that files exist and that only one Map task is considered by the Coordinator since the Coordinator will only consider it if it still believes the task has not been completed yet. 
+
+The second case qualifies the condition of using the atomic rename function to ensure there is only one output per reduce task. 
