@@ -137,8 +137,6 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	ret := false
-
-	// Your code here.
 	// Check if map times need to be reset
 	c.mapMu.Lock()
 	c.intermediateMu.Lock()
@@ -183,7 +181,6 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.nReduce = nReduce
 	c.remainingMapTasks = c.nMap
 	c.remainingReduceTasks = nReduce
-
 	c.intermediaryFiles = make([][]string, nReduce)
 	c.reduceBool = make([]bool, nReduce)
 	c.mapBool = make([]bool, len(files))
