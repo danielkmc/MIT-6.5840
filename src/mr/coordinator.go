@@ -93,7 +93,6 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 	reply.TaskNumber = -1
 	c.reduceMu.Lock()
 	if c.remainingMapTasks != 0 {
-		// nil indicates that there are no possibletasks since intermediate files are still being stored
 
 	} else if c.remainingReduceTasks == 0 {
 		reply.RemainingTasks = c.remainingReduceTasks
@@ -115,8 +114,8 @@ func (c *Coordinator) GetReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply
 }
 
 func (c *Coordinator) CompleteReduceTask(args *ReduceCompletionArgs, reply *ReduceCompletionReply) error {
+	// Record completion. Worker handles atomic renaming of file since it can overwrite as many times as possible
 	c.reduceMu.Lock()
-	// fmt.Printf("completed task %v!\n", args.TaskNumber)
 	c.ReduceBool[args.TaskNumber] = true
 	c.remainingReduceTasks -= 1
 	c.reduceMu.Unlock()
@@ -166,7 +165,6 @@ func (c *Coordinator) Done() bool {
 			morethan10 := time.Since(c.ReduceStartTimes[i]).Seconds() > 10
 			if morethan10 {
 				c.ReduceStartTimes[i] = time.Time{}
-				// fmt.Printf("Resetting time for reduce job %v\n", i)
 			}
 		}
 	}

@@ -96,7 +96,7 @@ func mapTask(mapf func(string, string) []KeyValue) bool {
 	} else if reply.RemainingTasks != 0 && filename == "" {
 		// Remaining tasks are all being processed by other workers
 		// Stay on standby incase map tasks are freed
-		time.Sleep(time.Duration(500) * time.Millisecond)
+		time.Sleep(time.Duration(50) * time.Millisecond)
 	} else if reply.RemainingTasks == 0 {
 		return true
 	}
@@ -116,7 +116,6 @@ func reduceTask(reducef func(string, []string) string) bool {
 	} else {
 		// read intermediary files (should be in sorted order)
 		intermediate := []KeyValue{}
-		// fmt.Printf("task %v | remaining tasks: %v | intermediate files %v", reply.TaskNumber, reply.RemainingTasks, reply.IntermediateFiles)
 		for _, filename := range reply.IntermediateFiles {
 			file, err := os.Open(filename)
 			if err != nil {
@@ -153,9 +152,7 @@ func reduceTask(reducef func(string, []string) string) bool {
 
 		// call Reduce on each distinct key in intermediate[],
 		// and print the result to mr-out-0.
-		//
 		i := 0
-		// fmt.Printf("working on %v, nfiles: %v\n", reply.TaskNumber, len(intermediate))
 		for i < len(intermediate) {
 			j := i + 1
 			for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
@@ -165,7 +162,6 @@ func reduceTask(reducef func(string, []string) string) bool {
 			for k := i; k < j; k++ {
 				values = append(values, intermediate[k].Value)
 			}
-			// fmt.Printf("%v reduce function %v %v\n", reply.TaskNumber, intermediate[i].Key, values)
 			output := reducef(intermediate[i].Key, values)
 			// this is the correct format for each line of Reduce output.
 			fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
@@ -196,19 +192,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			break
 		}
 	}
-
-	// Get reduce task if there are no more map tasks
 	for {
-		// keep getting reduce tasks while there are still reduce tasks
 		if reduceTask(reducef) {
 			break
 		}
 	}
-	// Your worker implementation here.
-
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-
 }
 
 /*
