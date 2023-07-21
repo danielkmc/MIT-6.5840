@@ -469,7 +469,7 @@ func (rf *Raft) logAgreement(peers int) {
 			checkMu.Unlock()
 			fmt.Printf("[RAFT %v %v][LOG AGREEMENT] sending logs [%v, %v] to peer %v!\n", rf.me, rf.currentTerm, rf.nextIndex[i], len(rf.log)-1, i)
 			rf.mu.Unlock()
-			go func(server int) {
+			go func(server int, rf *Raft) {
 				count := 0
 				for {
 					count += 1
@@ -482,7 +482,7 @@ func (rf *Raft) logAgreement(peers int) {
 						checkingPeer[server] = false
 						checkMu.Unlock()
 						rf.mu.Unlock()
-						return
+						break
 					}
 					var reply AppendEntriesReply
 					// If the last log index is greater than or equal to a follower, then we want to send log entries
@@ -513,14 +513,14 @@ func (rf *Raft) logAgreement(peers int) {
 							checkMu.Lock()
 							checkingPeer[server] = false
 							checkMu.Unlock()
-							return
+							break
 						}
 					}
-					time.Sleep(time.Duration(25) * time.Millisecond)
+					time.Sleep(time.Duration(10) * time.Millisecond)
 				}
-			}(i)
+			}(i, rf)
 		}
-		time.Sleep(time.Duration(10) * time.Millisecond)
+		// time.Sleep(time.Duration(10) * time.Millisecond)
 	}
 }
 
@@ -609,7 +609,7 @@ func (rf *Raft) heartbeat(peers int) {
 			// fmt.Printf("[Raft %v] [HEARTBEAT %v] sending heartbeat to SERVER %v\n", rf.me, rf.currentTerm, i)
 			rf.mu.Unlock()
 
-			go func(server int) {
+			go func(server int, rf *Raft) {
 				// Repeatedly send RPC until we reach follower
 				for {
 					rf.mu.Lock()
@@ -627,7 +627,7 @@ func (rf *Raft) heartbeat(peers int) {
 					}
 					time.Sleep(time.Duration(10) * time.Millisecond)
 				}
-			}(i)
+			}(i, rf)
 		}
 		// 10 heartbeats per second max -> minimum of 100 ms timeout
 		ms := 101 - time.Since(start).Milliseconds()
