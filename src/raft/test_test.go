@@ -699,9 +699,12 @@ func TestPersist12C(t *testing.T) {
 		cfg.connect(i)
 	}
 
+	fmt.Printf("[TEST] Reconnected all servers!!!!!!!!!!!!!!!!!!!!!!\n")
+
 	cfg.one(12, servers, true)
 
 	leader1 := cfg.checkOneLeader()
+	fmt.Printf("[TEST] DISCONNECTING LEADER1 %v!!!!!!!!!!!!!!!!!!!!!\n", leader1)
 	cfg.disconnect(leader1)
 	cfg.start1(leader1, cfg.applier)
 	cfg.connect(leader1)
@@ -709,11 +712,14 @@ func TestPersist12C(t *testing.T) {
 	cfg.one(13, servers, true)
 
 	leader2 := cfg.checkOneLeader()
+	fmt.Printf("[TEST] DISCONNECTING LEADER2 %v!!!!!!!!!!!!!!!!!!!!!\n", leader2)
+
 	cfg.disconnect(leader2)
 	cfg.one(14, servers-1, true)
 	cfg.start1(leader2, cfg.applier)
 	cfg.connect(leader2)
 
+	fmt.Printf("[TEST] WAITING FOR LEADER2 %v TO JOIN!!!!!!!!!!!!!!!!!!!!!\n", leader2)
 	cfg.wait(4, servers, -1) // wait for leader2 to join before killing i3
 
 	i3 := (cfg.checkOneLeader() + 1) % servers
@@ -721,6 +727,7 @@ func TestPersist12C(t *testing.T) {
 	cfg.one(15, servers-1, true)
 	cfg.start1(i3, cfg.applier)
 	cfg.connect(i3)
+	fmt.Printf("[TEST] Last append!!!!!!!!!!!!!!!!!!!!!\n")
 
 	cfg.one(16, servers, true)
 
@@ -736,6 +743,7 @@ func TestPersist22C(t *testing.T) {
 
 	index := 1
 	for iters := 0; iters < 5; iters++ {
+		// fmt.Printf("[TEST] ITERATION %v------------------------------------------------------------\n", iters)
 		cfg.one(10+index, servers, true)
 		index++
 
@@ -907,6 +915,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
+		// fmt.Printf("[TEST] ITERATION %v-------------------------------------------------\n", iters)
 		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
@@ -1113,11 +1122,14 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	defer cfg.cleanup()
 
 	cfg.begin(name)
-
+	fmt.Printf("[TEST] CFG BEGIN complete!\n")
 	cfg.one(rand.Int(), servers, true)
+	fmt.Printf("[TEST] CFG ONE complete!\n")
 	leader1 := cfg.checkOneLeader()
 
+	fmt.Printf("[TEST] BEFORE FOR LOOP\n")
 	for i := 0; i < iters; i++ {
+		fmt.Printf("[TEST] ITERATION %v-----------------\n", i)
 		victim := (leader1 + 1) % servers
 		sender := leader1
 		if i%3 == 1 {
@@ -1136,6 +1148,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 
 		// perhaps send enough to get a snapshot
 		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
+		fmt.Printf("[TEST] SENDING %v COMMANDS TO LEADER!\n", nn)
 		for i := 0; i < nn; i++ {
 			cfg.rafts[sender].Start(rand.Int())
 		}
