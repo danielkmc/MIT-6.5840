@@ -72,6 +72,7 @@ func TestReElection2A(t *testing.T) {
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
+	fmt.Printf("[TESTS] reconnected leader %v\n", leader1)
 	leader2 := cfg.checkOneLeader()
 	fmt.Println("[TESTS] reached 2")
 
@@ -1129,7 +1130,6 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 
 	fmt.Printf("[TEST] BEFORE FOR LOOP\n")
 	for i := 0; i < iters; i++ {
-		fmt.Printf("[TEST] ITERATION %v-----------------\n", i)
 		victim := (leader1 + 1) % servers
 		sender := leader1
 		if i%3 == 1 {
@@ -1137,11 +1137,15 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			victim = leader1
 		}
 
+		fmt.Printf("[TEST] ITERATION %v----------------- VICTIM: %v | SENDER: %v\n", i, victim, sender)
+
 		if disconnect {
+			fmt.Printf("[TEST] ------------------ DISCONNECTING %v ------------------\n", victim)
 			cfg.disconnect(victim)
 			cfg.one(rand.Int(), servers-1, true)
 		}
 		if crash {
+			fmt.Printf("[TEST] ------------------ CRASHING %v ------------------\n", victim)
 			cfg.crash1(victim)
 			cfg.one(rand.Int(), servers-1, true)
 		}
@@ -1169,11 +1173,13 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		if disconnect {
 			// reconnect a follower, who maybe behind and
 			// needs to rceive a snapshot to catch up.
+			fmt.Printf("[TEST] ------------------ RECONNECTING %v ------------------\n", victim)
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
 		}
 		if crash {
+			fmt.Printf("[TEST] ------------------ RECOVERING FROM CRASH %v ------------------\n", victim)
 			cfg.start1(victim, cfg.applierSnap)
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
@@ -1262,31 +1268,37 @@ func TestSnapshotInit2D(t *testing.T) {
 	}
 
 	// crash all
+	fmt.Printf("--------------------------------------------------------------------[TEST] CRASHED ALL 1--------------\n")
 	for i := 0; i < servers; i++ {
 		cfg.crash1(i)
 	}
 
 	// revive all
+	fmt.Printf("--------------------------------------------------------------------[TEST] REVIVED ALL 1--------------\n")
 	for i := 0; i < servers; i++ {
 		cfg.start1(i, cfg.applierSnap)
 		cfg.connect(i)
 	}
 
 	// a single op, to get something to be written back to persistent storage.
+	fmt.Printf("--------------------------------------------------------------------[TEST] ONE OP 1--------------\n")
 	cfg.one(rand.Int(), servers, true)
 
+	fmt.Printf("--------------------------------------------------------------------[TEST] CRASHED ALL 2--------------\n")
 	// crash all
 	for i := 0; i < servers; i++ {
 		cfg.crash1(i)
 	}
 
 	// revive all
+	fmt.Printf("--------------------------------------------------------------------[TEST] REVIVED ALL 2--------------\n")
 	for i := 0; i < servers; i++ {
 		cfg.start1(i, cfg.applierSnap)
 		cfg.connect(i)
 	}
 
 	// do another op to trigger potential bug
+	fmt.Printf("--------------------------------------------------------------------[TEST] ONE OP 2--------------\n")
 	cfg.one(rand.Int(), servers, true)
 	cfg.end()
 }
