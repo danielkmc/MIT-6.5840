@@ -20,7 +20,6 @@ package raft
 import (
 	//	"bytes"
 	"bytes"
-	"fmt"
 	"log"
 	"math/rand"
 	"sync"
@@ -362,7 +361,7 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 			rf.persist()
 			return ok
 		}
-		if rf.nextIndex[server] <= args.LastIncludedIndex {
+		if rf.nextIndex[server] < args.LastIncludedIndex+1 {
 			rf.matchIndex[server] = args.LastIncludedIndex
 			rf.nextIndex[server] = args.LastIncludedIndex + 1
 		}
@@ -521,10 +520,6 @@ func (rf *Raft) applyEntries() {
 			msg := ApplyMsg{}
 			msg.CommandValid = true
 			msg.CommandIndex = rf.lastApplied
-			if rf.lastApplied-rf.offsetIndex >= len(rf.log) {
-				log.Fatalf("[RAFT %v %v][APPLY ENTRIES] index %v out of range! log length: %v |\nlog: %v\n", rf.me,
-					rf.currentTerm, rf.lastApplied-rf.offsetIndex, len(rf.log), rf.log)
-			}
 			msg.Command = rf.log[rf.lastApplied-rf.offsetIndex].Entry
 			DPrintf("[RAFT %v %v][APPLY ENTRIES] applying index %v (%v) to state machine\n", rf.me, rf.currentTerm,
 				msg.CommandIndex-rf.offsetIndex, msg.CommandIndex)
@@ -568,15 +563,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		// Reply false if log does not have an entry at prevLogIndex whose term matches prevLogTerm
 		logLength := rf.offsetIndex + len(rf.log)
-		DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] args.PrevLogIndex %v | len(rf.log) %v | args.PrevLogTerm %v\n rf.lastIncludedIndex: %v | rf.lastIncludedTerm: %v\n",
-			rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), args.PrevLogIndex, logLength, args.PrevLogTerm, rf.lastIncludedIndex, rf.lastIncludedTerm)
+		DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] args.LeaderCommit: %v | args.PrevLogIndex %v | len(rf.log) %v | args.PrevLogTerm %v\n rf.lastIncludedIndex: %v | rf.lastIncludedTerm: %v\n",
+			rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), args.LeaderCommit, args.PrevLogIndex, logLength, args.PrevLogTerm, rf.lastIncludedIndex, rf.lastIncludedTerm)
 		DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] offsetIndex: %v\n", rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), rf.offsetIndex)
-		if args.PrevLogIndex != rf.lastIncludedIndex && args.PrevLogIndex < rf.offsetIndex {
-			s := fmt.Sprintf("[RAFT %v %v][APPEND ENTRIES %v %v] args.PrevLogIndex: %v | leader: %v | args.Term: %v | args.PrevLogTerm: %v\n",
-				rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), args.PrevLogIndex, args.LeaderId, args.Term, args.PrevLogTerm)
-			log.Fatalf(s+"[RAFT %v %v][APPEND ENTRIES %v %v] args.PrevLogIndex is not within log! rf.LastIncludedIndex: %v\n",
-				rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), rf.lastIncludedIndex)
-		}
+		// if args.PrevLogIndex != rf.lastIncludedIndex && args.PrevLogIndex < rf.offsetIndex {
+		// 	return
+		// }
 		if logLength <= args.PrevLogIndex ||
 			(args.PrevLogIndex == rf.lastIncludedIndex && rf.lastIncludedTerm != args.PrevLogTerm) ||
 			(args.PrevLogIndex != rf.lastIncludedIndex && rf.log[args.PrevLogIndex-rf.offsetIndex].Term != args.PrevLogTerm) {
@@ -584,52 +576,56 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 			// Find values for reply.X*
 			// the follower can include the term of the conflicting entry and the first index it stores for that term
-			reply.XLen, reply.XTerm, reply.XIndex = -1, -1, -1
+			reply.XLen = logLength
+			reply.XIndex = args.PrevLogIndex
+
 			if logLength <= args.PrevLogIndex {
 				// log doesn't have prevLogIndex at all
-				reply.XLen = logLength
+				DPrintf("[RAFT %v %v][APPEND ENTRIES] loglength: %v | args.PrevLogIndex: %v\n", rf.me, rf.currentTerm,
+					len(rf.log)+rf.offsetIndex, args.PrevLogIndex)
+				return
+			} else if args.PrevLogIndex == rf.lastIncludedIndex || rf.log[args.PrevLogIndex-rf.offsetIndex].Term == rf.lastIncludedTerm {
+				reply.XTerm = rf.lastIncludedTerm
+				reply.XIndex = rf.lastIncludedIndex
+				return
 			} else {
+				reply.XTerm = rf.log[args.PrevLogIndex-rf.offsetIndex].Term
 				// the term at prevLogIndex doesn't match the term from the leader
 				// first try the term that we do have
-				if args.PrevLogIndex == rf.lastIncludedIndex {
-					reply.XIndex = args.PrevLogIndex
-					reply.XTerm = rf.lastIncludedTerm
-				} else {
-					reply.XTerm = rf.log[args.PrevLogIndex-rf.offsetIndex].Term
-					reply.XIndex = args.PrevLogIndex
-					// second option is to get the index of the first entry with the matching term from the leader
-					for i := args.PrevLogIndex - rf.offsetIndex - 1; i >= 0; i-- {
-						if rf.log[i].Term == reply.XTerm {
-							reply.XIndex = i + rf.offsetIndex
-						} else {
-							break
-						}
-					}
-					if reply.XIndex-rf.offsetIndex == 0 {
-						if rf.lastIncludedTerm == reply.XTerm {
-							reply.XIndex = rf.lastIncludedIndex
-						}
+				// second option is to get the index of the first entry with the matching term from the leader
+				for i := args.PrevLogIndex - rf.offsetIndex - 1; i >= 0; i-- {
+					if rf.log[i].Term == reply.XTerm {
+						reply.XIndex = i + rf.offsetIndex
+					} else {
+						break
 					}
 				}
+				return
 			}
-			return
 		} else {
+			DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] prev check successful!\n", rf.me, rf.currentTerm, args.LeaderId, len(args.Entries))
 			reply.Success = true
-			rf.log = rf.log[:args.PrevLogIndex+1-rf.offsetIndex]
-			rf.persist()
 			if len(args.Entries) > 0 {
 				DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] appending entries to log!\n", rf.me, rf.currentTerm, args.LeaderId, len(args.Entries))
-				// logSize := len(rf.log)
-				rf.log = append(rf.log, args.Entries...)
-				DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] log: %v\n", rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), rf.log)
+				for i, entry := range args.Entries {
+					thisIndex := args.PrevLogIndex + 1 + i - rf.offsetIndex
+					if thisIndex < len(rf.log) && rf.log[thisIndex].Term == entry.Term {
+						continue
+					} else {
+						rf.log = rf.log[:thisIndex]
+						rf.log = append(rf.log, args.Entries[i:]...)
+						break
+					}
+				}
 				rf.persist()
+				DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] log: %v\n", rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), rf.log)
 			}
 		}
 		// Update follower commit index to be min(LeaderCommit, last index of updated rf.log)
 		if args.LeaderCommit > rf.commitIndex {
 			var newCommit int = args.LeaderCommit
-			if newCommit > len(rf.log)-1+rf.offsetIndex {
-				newCommit = len(rf.log) - 1 + rf.offsetIndex
+			if newCommit > args.PrevLogIndex+len(args.Entries) {
+				newCommit = args.PrevLogIndex + len(args.Entries)
 			}
 			DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] updated commitIndex: %v -> %v | args.LeaderCommit: %v | loglength: %v\nlog: %v", rf.me, rf.currentTerm,
 				args.LeaderId, len(args.Entries), rf.commitIndex, newCommit, args.LeaderCommit, len(rf.log), rf.log)
@@ -668,13 +664,10 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	// if the check is unsuccessful, we decrement nextIndex
 	// if it's for the term not matching, it means that the entries are not matching
 	if ok {
-		if !reply.Success {
-			if reply.XLen != -1 {
+		if !reply.Success && rf.nextIndex[server] == args.PrevLogIndex+1 {
+			if reply.XLen <= args.PrevLogIndex {
 				// If the length is shorter than our log, we should use different length
-				if reply.XLen >= len(rf.log)+rf.offsetIndex {
-					log.Fatalf("[RAFT %v %v][SEND APPEND ENTRIES][SERVER %v] XLen %v for server %v is larger than our log %v!",
-						rf.me, rf.currentTerm, server, reply.XLen, server, len(rf.log))
-				}
+				DPrintf("[RAFT %v %v][SEND APPEND ENTRIES][SERVER %v] using XLen %v\n", rf.me, rf.currentTerm, server, reply.XLen)
 				rf.nextIndex[server] = reply.XLen
 			} else {
 				// check if leader has XTerm
@@ -689,7 +682,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 				DPrintf("[RAFT %v %v][SEND APPEND ENTRIES][SERVER %v]log length: %v | rf.nextIndex[%v]: %v\n", rf.me,
 					rf.currentTerm, server, len(rf.log)+rf.offsetIndex, server, rf.nextIndex[server])
 				DPrintf("[RAFT %v %v][SEND APPEND ENTRIES][SERVER %v] reply: %v\n", rf.me, rf.currentTerm, server, reply)
-				for i := len(rf.log) - 1; i > -1; i-- {
+				for i := len(rf.log) - 1; i >= 0; i-- {
 					if rf.log[i].Term < reply.XTerm {
 						// log has entries stored in term order (non-descending)
 						break
@@ -701,31 +694,24 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 				}
 				if matchingTermIndex == -1 {
 					// leader's log has no entry that matches the term
-					if reply.XIndex == -1 {
-						log.Fatalf("[RAFT %v %v] [SEND APPEND ENTRIES] received XIndex -1 for server %v!\n", rf.me, rf.currentTerm, server)
-					}
-					if reply.XIndex > len(rf.log)+rf.offsetIndex {
-						log.Fatalf("[RAFT %v %v] [SEND APPEND ENTRIES] server %v XIndex %v cannot be greater than log length %v!\n", rf.me, rf.currentTerm, server, reply.XIndex, len(rf.log)+rf.offsetIndex)
-					}
+					DPrintf("[RAFT %v %v][SEND APPEND ENTRIES][SERVER %v] using XIndex for nextIndex: %v\n", rf.me, rf.currentTerm, server, reply.XIndex)
 					rf.nextIndex[server] = reply.XIndex
-					DPrintf("[RAFT %v %v][SEND APPEND ENTRIES] server %v using XIndex %v\n", rf.me, rf.currentTerm, server, reply.XIndex)
 				} else {
+					DPrintf("[RAFT %v %v][SEND APPEND ENTRIES][SERVER %v] using first match index for nextIndex: %v\n", rf.me, rf.currentTerm, server, matchingTermIndex)
 					rf.nextIndex[server] = matchingTermIndex
-					DPrintf("[RAFT %v %v][SEND APPEND ENTRIES] server %v using first match index %v\n", rf.me, rf.currentTerm, server, matchingTermIndex)
 				}
 			}
 
-			if len(rf.log)+rf.offsetIndex < rf.nextIndex[server] {
-				log.Fatalf("[RAFT %v %v][SEND APPEND ENTRIES][server %v] LENGTH OF PEER'S LOG CANNOT BE GREATER THAN OURS: %v %v\n",
-					rf.me, rf.currentTerm, server, len(rf.log), rf.nextIndex[server])
-			}
-		} else {
+		} else if reply.Success {
 			// update nextIndex and matchIndex for non-heartbeat sends
-			if len(args.Entries) > 0 && args.PrevLogIndex+1+len(args.Entries) >= rf.nextIndex[server] {
-				DPrintf("[RAFT %v %v][SEND APPEND ENTRIES][server %v] updating nextIndex from %v to %v\n", rf.me, rf.currentTerm,
+			if len(args.Entries) > 0 && args.PrevLogIndex+1+len(args.Entries) > rf.nextIndex[server] {
+				DPrintf("[RAFT %v %v][SEND APPEND ENTRIES][SERVER %v] updating nextIndex: %v -> %v\n", rf.me, rf.currentTerm,
 					server, args.PrevLogIndex+1, args.PrevLogIndex+1+len(args.Entries))
 				rf.nextIndex[server] = args.PrevLogIndex + 1 + len(args.Entries)
 				rf.matchIndex[server] = rf.nextIndex[server] - 1
+			} else {
+				DPrintf("[RAFT %v %v][SEND APPEND ENTRIES][SERVER %v] args.PrevLogIndex: %v | len(args.Entries): %v | nextIndex: %v\n",
+					rf.me, rf.currentTerm, server, args.PrevLogIndex, len(args.Entries), rf.nextIndex[server])
 			}
 		}
 	}
@@ -747,7 +733,7 @@ func (rf *Raft) updateCommitIndex() {
 		majorityIndex := rf.commitIndex
 		minMajority := len(rf.peers)/2 + 1
 		for _, mIndex := range rf.matchIndex {
-			DPrintf("[RAFT %v %v][UPDATE COMMIT INDEX] mIndex: %v | len log + offset: %v | offset: %v\n", rf.me, rf.currentTerm, mIndex, len(rf.log)+rf.offsetIndex, rf.offsetIndex)
+			// DPrintf("[RAFT %v %v][UPDATE COMMIT INDEX] mIndex: %v | len log + offset: %v | offset: %v\n", rf.me, rf.currentTerm, mIndex, len(rf.log)+rf.offsetIndex, rf.offsetIndex)
 			for mIndex >= rf.commitIndex && ((mIndex > rf.lastIncludedIndex && rf.log[mIndex-rf.offsetIndex].Term == rf.currentTerm) ||
 				(mIndex == rf.lastIncludedIndex && rf.lastIncludedTerm == rf.currentTerm)) {
 				indexCounts[mIndex]++
@@ -768,10 +754,6 @@ func (rf *Raft) updateCommitIndex() {
 		} else {
 			DPrintf("[RAFT %v %v][COMMIT COMMANDS] majorityIndex %v found! old: %v\n", rf.me, rf.currentTerm,
 				majorityIndex, rf.commitIndex)
-			if majorityIndex < rf.commitIndex {
-				log.Fatalf("[RAFT %v %v][COMMIT COMMANDS] majorityIndex %v less than commit index %v\n", rf.me,
-					rf.currentTerm, majorityIndex, rf.commitIndex)
-			}
 			// MajorityIndex found! Apply changes to state machine
 			DPrintf("[RAFT %v %v][COMMIT COMMANDS] LEADER updating commits from %v to %v\n", rf.me, rf.currentTerm, rf.commitIndex, majorityIndex)
 			rf.commitIndex = majorityIndex
@@ -815,71 +797,70 @@ func (rf *Raft) logAgreement(peers int, term int) {
 
 			// set up args here?
 			go func(server int, term int) {
-				count := 0
-				for !rf.killed() {
-					count += 1
-					rf.mu.Lock()
-					if !rf.isLeader || rf.currentTerm != term {
-						// DPrintf("[RAFT %v %v][LOG AGREEMENT] [server %v] no longer leader! stop sending! leader: %v | term: %v\n",
-						// 	rf.me, rf.currentTerm, server, rf.isLeader, term)
-						rf.mu.Unlock()
-						return
-					}
-					nextIndex := rf.nextIndex[server]
-					if nextIndex < rf.offsetIndex {
-						offsetIndex := rf.offsetIndex
-						DPrintf("[RAFT %v %v][LOG AGREEMENT][SERVER %v] need to send snapshot! offsetIndex: %v\n",
-							rf.me, rf.currentTerm, server, rf.offsetIndex)
-						rf.mu.Unlock()
-
-						if !rf.relaySnapshots(server) {
-							return
-						} else {
-							rf.mu.Lock()
-							DPrintf("[RAFT %v %v][LOG AGREEMENT][SERVER %v] established snapshot! offsetIndex: %v\n",
-								rf.me, rf.currentTerm, server, offsetIndex)
-							rf.mu.Unlock()
-							continue
-						}
-					}
-					lastLogIndex := len(rf.log) + rf.offsetIndex - 1
-					if len(rf.log) == 0 || lastLogIndex < nextIndex {
-						rf.mu.Unlock()
-						return
-					}
-
-					// If the last log index is greater than or equal to a follower, then we want to send log entries
-					// starting at nextIndex
-					//	- if successful, update nextIndex and matchIndex
-					//	- if failed due to log inconsistency, decrement nextIndex and retry
-					// nextIndex stores next log entry to send, so prevLogIndex is the last log entry before the new
-					// ones.
-
-					prevLogIndex := nextIndex - 1
-					prevLogTerm := rf.lastIncludedTerm
-					if prevLogIndex != rf.lastIncludedIndex {
-						prevLogTerm = rf.log[prevLogIndex-rf.offsetIndex].Term
-					}
-
-					args := AppendEntriesArgs{rf.currentTerm, rf.me, prevLogIndex, prevLogTerm, []LogEntry{}, rf.commitIndex}
-					reply := AppendEntriesReply{}
-					// Add the new log entries that start from rf.nextIndex[server] and onwards
-
-					// If nextIndex is less than offsetIndex, then we can't update and must use a snapshot to update
-					// but we can't wait for snapshot to be called:
-					// 	1. There could be a follower that was exceptionally slow and did no
-					args.Entries = append(args.Entries, rf.log[nextIndex-rf.offsetIndex:]...)
-
-					if len(args.Entries) <= 0 {
-						log.Fatal("[LOG AGREEMENT][ERROR] entries must have at least one element!\n")
-					}
-					// DPrintf("[LOG ENTRIES SIZE] %v\n", len(args.Entries))
-					// DPrintf("[RAFT %v %v][LOG AGREEMENT][server %v] RETRYING LOG AGREEMENT\n", rf.me, rf.currentTerm, server)
+				rf.mu.Lock()
+				if !rf.isLeader || rf.currentTerm != term {
+					// DPrintf("[RAFT %v %v][LOG AGREEMENT] [server %v] no longer leader! stop sending! leader: %v | term: %v\n",
+					// 	rf.me, rf.currentTerm, server, rf.isLeader, term)
+					rf.mu.Unlock()
+					return
+				}
+				nextIndex := rf.nextIndex[server]
+				DPrintf("[RAFT %v %v][LOG AGREEMENT][SERVER %v] nextIndex: %v | offsetIndex: %v\n", rf.me, rf.currentTerm, server, rf.nextIndex[server], rf.offsetIndex)
+				if nextIndex < rf.offsetIndex {
+					offsetIndex := rf.offsetIndex
+					DPrintf("[RAFT %v %v][LOG AGREEMENT][SERVER %v] need to send snapshot! offsetIndex: %v\n",
+						rf.me, rf.currentTerm, server, rf.offsetIndex)
 					rf.mu.Unlock()
 
+					if !rf.relaySnapshots(server) {
+						return
+					} else {
+						rf.mu.Lock()
+						DPrintf("[RAFT %v %v][LOG AGREEMENT][SERVER %v] established snapshot! offsetIndex: %v\n",
+							rf.me, rf.currentTerm, server, offsetIndex)
+						rf.mu.Unlock()
+						return
+					}
+				}
+				lastLogIndex := len(rf.log) + rf.offsetIndex - 1
+				if len(rf.log) == 0 || lastLogIndex < nextIndex {
+					rf.mu.Unlock()
+					return
+				}
+
+				// If the last log index is greater than or equal to a follower, then we want to send log entries
+				// starting at nextIndex
+				//	- if successful, update nextIndex and matchIndex
+				//	- if failed due to log inconsistency, decrement nextIndex and retry
+				// nextIndex stores next log entry to send, so prevLogIndex is the last log entry before the new
+				// ones.
+
+				prevLogIndex := nextIndex - 1
+				prevLogTerm := rf.lastIncludedTerm
+				if prevLogIndex != rf.lastIncludedIndex {
+					prevLogTerm = rf.log[prevLogIndex-rf.offsetIndex].Term
+				}
+
+				args := AppendEntriesArgs{rf.currentTerm, rf.me, prevLogIndex, prevLogTerm, []LogEntry{}, rf.commitIndex}
+				reply := AppendEntriesReply{}
+				// Add the new log entries that start from rf.nextIndex[server] and onwards
+
+				// If nextIndex is less than offsetIndex, then we can't update and must use a snapshot to update
+				// but we can't wait for snapshot to be called:
+				// 	1. There could be a follower that was exceptionally slow and did no
+				args.Entries = append(args.Entries, rf.log[nextIndex-rf.offsetIndex:]...)
+
+				if len(args.Entries) <= 0 {
+					log.Fatal("[LOG AGREEMENT][ERROR] entries must have at least one element!\n")
+				}
+				// DPrintf("[LOG ENTRIES SIZE] %v\n", len(args.Entries))
+				// DPrintf("[RAFT %v %v][LOG AGREEMENT][server %v] RETRYING LOG AGREEMENT\n", rf.me, rf.currentTerm, server)
+				rf.mu.Unlock()
+				for !rf.killed() {
 					ok := rf.sendAppendEntries(server, &args, &reply)
-					if ok {
-						DPrintf("[LOG AGREEMENT] successful after %v tries for server %v\n", count, server)
+					if ok && reply.Success {
+						DPrintf("[LOG AGREEMENT] successful for server %v\n", server)
+
 						// only want to stop if leader was successful at reaching the peer
 						return
 					}
@@ -888,7 +869,7 @@ func (rf *Raft) logAgreement(peers int, term int) {
 			}(i, term)
 		}
 		rf.mu.Unlock()
-		time.Sleep(time.Duration(10) * time.Millisecond)
+		time.Sleep(time.Duration(25) * time.Millisecond)
 	}
 }
 
@@ -972,12 +953,6 @@ func (rf *Raft) heartbeat(peers int, term int) {
 						return
 					}
 					nextIndex := rf.nextIndex[server]
-					logLength := len(rf.log) + rf.offsetIndex
-					if nextIndex > logLength {
-						log.Fatalf("[RAFT %v %v] [HEARTBEAT] next index %v for server %v is much larger than current log length %v!\n",
-							rf.me, rf.currentTerm, rf.nextIndex[server]-1, server, len(rf.log)+rf.offsetIndex)
-					}
-
 					prevLogIndex := nextIndex - 1
 					prevLogTerm := rf.lastIncludedTerm
 					if prevLogIndex > rf.lastIncludedIndex {
@@ -985,7 +960,6 @@ func (rf *Raft) heartbeat(peers int, term int) {
 					} else if prevLogIndex < rf.lastIncludedIndex {
 						DPrintf("[RAFT %v %v][HEARTBEAT][SERVER %v] prevLogIndex < lastIncludedIndex ! %v < %v -> SNAPSHOT NEEDED!\n",
 							rf.me, rf.currentTerm, server, prevLogIndex, rf.lastIncludedIndex)
-						offsetIndex := rf.offsetIndex
 						DPrintf("[RAFT %v %v][HEARTBEAT][SERVER %v] need to send snapshot! offsetIndex: %v\n",
 							rf.me, rf.currentTerm, server, rf.offsetIndex)
 						rf.mu.Unlock()
@@ -994,10 +968,10 @@ func (rf *Raft) heartbeat(peers int, term int) {
 							return
 						} else {
 							rf.mu.Lock()
-							DPrintf("[RAFT %v %v][HEARTBEAT][SERVER %v] established snapshot! offsetIndex: %v\n",
-								rf.me, rf.currentTerm, server, offsetIndex)
+							DPrintf("[RAFT %v %v][HEARTBEAT][SERVER %v] established snapshot!\n", rf.me, rf.currentTerm,
+								server)
 							rf.mu.Unlock()
-							continue
+							return
 						}
 					}
 
@@ -1008,9 +982,9 @@ func (rf *Raft) heartbeat(peers int, term int) {
 					reply := AppendEntriesReply{}
 					ok := rf.sendAppendEntries(server, &args, &reply)
 					if ok {
-						rf.mu.Lock()
+						// rf.mu.Lock()
 						// DPrintf("[RAFT %v %v][HEARBEAT][SERVER %v] responded to heartbeat!\n", rf.me, rf.currentTerm, server)
-						rf.mu.Unlock()
+						// rf.mu.Unlock()
 						return
 					}
 					time.Sleep(time.Duration(10) * time.Millisecond)
