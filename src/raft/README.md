@@ -35,3 +35,33 @@ type Raft struct {
 	isLeader        bool
 }
 ```
+
+Each Raft has the following RPCs to accomplish the distributed consensus' goals:
+* InstallSnapshot
+* RequestVote
+* AppendEntries
+
+For each Raft peer, they have the following functions to maintain the peer:
+* persist
+* readPersist
+* Snapshot
+* relaySnapshots
+* sendInstallSnapshot
+* sendRequestVote
+* applyEntries
+* sendAppendEntries
+* updateCommitIndex
+* logAgreement
+* heartbeat
+* election
+* ticker
+* Start
+* killed
+
+There are some other functions used for the tester such as `Kill()` and `GetState()`.
+
+
+## RPCs
+The RPCs were designed following the guidelines provided by the original Raft paper's Figure 2, where the various types of servers (Followers, Candidates, Leaders) have their specifications listed. 
+![Raft Figure 2](raft_figure2.png)
+
