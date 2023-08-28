@@ -566,9 +566,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] args.LeaderCommit: %v | args.PrevLogIndex %v | len(rf.log) %v | args.PrevLogTerm %v\n rf.lastIncludedIndex: %v | rf.lastIncludedTerm: %v\n",
 			rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), args.LeaderCommit, args.PrevLogIndex, logLength, args.PrevLogTerm, rf.lastIncludedIndex, rf.lastIncludedTerm)
 		DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] offsetIndex: %v\n", rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), rf.offsetIndex)
-		// if args.PrevLogIndex != rf.lastIncludedIndex && args.PrevLogIndex < rf.offsetIndex {
-		// 	return
-		// }
+		if args.PrevLogIndex != rf.lastIncludedIndex && args.PrevLogIndex < rf.offsetIndex {
+			return
+		}
 		if logLength <= args.PrevLogIndex ||
 			(args.PrevLogIndex == rf.lastIncludedIndex && rf.lastIncludedTerm != args.PrevLogTerm) ||
 			(args.PrevLogIndex != rf.lastIncludedIndex && rf.log[args.PrevLogIndex-rf.offsetIndex].Term != args.PrevLogTerm) {
@@ -627,15 +627,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if newCommit > args.PrevLogIndex+len(args.Entries) {
 				newCommit = args.PrevLogIndex + len(args.Entries)
 			}
-			DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] updated commitIndex: %v -> %v | args.LeaderCommit: %v | loglength: %v\nlog: %v", rf.me, rf.currentTerm,
-				args.LeaderId, len(args.Entries), rf.commitIndex, newCommit, args.LeaderCommit, len(rf.log), rf.log)
-			DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] args.PrevLogIndex: %v | args.PrevLogTerm: %v\n", rf.me,
-				rf.currentTerm, args.LeaderId, len(args.Entries), args.PrevLogIndex, args.PrevLogTerm)
-			if newCommit < rf.commitIndex {
-				log.Fatalf("[RAFT %v %v][APPEND ENTRIES %v %v] newCommit < rf.commitIndex | %v < %v | args.LeaderCommit: %v | len(args.Entries): %v | args.PrevLogIndex: %v | rf.offsetIndex: %v\n",
-					rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), newCommit, rf.commitIndex, args.LeaderCommit, len(args.Entries), args.PrevLogIndex, rf.offsetIndex)
+			// DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] updated commitIndex: %v -> %v | args.LeaderCommit: %v | loglength: %v\nlog: %v", rf.me, rf.currentTerm,
+			// 	args.LeaderId, len(args.Entries), rf.commitIndex, newCommit, args.LeaderCommit, len(rf.log), rf.log)
+			// DPrintf("[RAFT %v %v][APPEND ENTRIES %v %v] args.PrevLogIndex: %v | args.PrevLogTerm: %v\n", rf.me,
+			// 	rf.currentTerm, args.LeaderId, len(args.Entries), args.PrevLogIndex, args.PrevLogTerm)
+			// if newCommit < rf.commitIndex {
+			// 	log.Fatalf("[RAFT %v %v][APPEND ENTRIES %v %v] newCommit < rf.commitIndex | %v < %v | args.LeaderCommit: %v | len(args.Entries): %v | args.PrevLogIndex: %v | rf.offsetIndex: %v\n",
+			// 		rf.me, rf.currentTerm, args.LeaderId, len(args.Entries), newCommit, rf.commitIndex, args.LeaderCommit, len(args.Entries), args.PrevLogIndex, rf.offsetIndex)
+			// }
+			if newCommit > rf.commitIndex {
+				rf.commitIndex = newCommit
 			}
-			rf.commitIndex = newCommit
 		}
 		// DPrintf("[RAFT %v %v] [APPEND ENTRIES] done!\n", rf.me, rf.currentTerm)
 		return
@@ -857,6 +859,12 @@ func (rf *Raft) logAgreement(peers int, term int) {
 				// DPrintf("[RAFT %v %v][LOG AGREEMENT][server %v] RETRYING LOG AGREEMENT\n", rf.me, rf.currentTerm, server)
 				rf.mu.Unlock()
 				for !rf.killed() {
+					rf.mu.Lock()
+					if !rf.isLeader {
+						rf.mu.Unlock()
+						return
+					}
+					rf.mu.Unlock()
 					ok := rf.sendAppendEntries(server, &args, &reply)
 					if ok && reply.Success {
 						DPrintf("[LOG AGREEMENT] successful for server %v\n", server)
