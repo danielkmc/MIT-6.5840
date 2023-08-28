@@ -63,5 +63,5 @@ There are some other functions used for the tester such as `Kill()` and `GetStat
 
 ## RPCs
 The RPCs were designed following the guidelines provided by the original Raft paper's Figure 2, where the various types of servers (Followers, Candidates, Leaders) have their specifications listed. 
-![Raft Figure 2](raft_figure2.png)
+<img src="raft_figure2.png" width="600">
 
