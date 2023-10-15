@@ -167,11 +167,8 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		rf.offsetIndex = newOffsetIndex
 		rf.snapshot = snapshot
 		rf.persist()
+		// Update peers if needed (nextIndex is in the snapshot)
 		if rf.isLeader && rf.offsetIndex == index+1 {
-			// Check if there are peers lagging
-			// A lagging peer would be one where nextIndex - 1(matchIndex possibly) is no longer in the log
-			// Peers that are not lagging would have the snapshot, peers that are lagging won't have the snapshot.
-			// We can update the peers here.
 			for i, nextIndex := range rf.nextIndex {
 				if i == rf.me {
 					continue
@@ -199,7 +196,13 @@ func (rf *Raft) relaySnapshot(server int) bool {
 			rf.mu.Unlock()
 			return true
 		}
-		args := InstallSnapshotArgs{rf.currentTerm, rf.me, rf.lastIncludedIndex, rf.lastIncludedTerm, rf.snapshot}
+		args := InstallSnapshotArgs{
+			rf.currentTerm,
+			rf.me,
+			rf.lastIncludedIndex,
+			rf.lastIncludedTerm,
+			rf.snapshot}
+
 		rf.mu.Unlock()
 		reply := InstallSnapshotReply{}
 		ok := rf.sendInstallSnapshot(server, &args, &reply)
