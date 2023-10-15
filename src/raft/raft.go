@@ -583,8 +583,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		return ok
 	}
 	if reply.Term > rf.currentTerm {
-		// DPrintf("[RAFT %v %v][SEND APPEND ENTRIES] current term outdated! new term: %v\n", rf.me, rf.currentTerm,
-		// 	reply.Term)
 		rf.currentTerm = reply.Term
 		rf.isLeader = false
 		rf.votedFor = -1
@@ -617,10 +615,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 				}
 				if matchingTermIndex == -1 {
 					// leader's log has no entry that matches the term
-					// DPrintf("[RAFT %v %v][SEND APPEND ENTRIES %v] using XIndex for nextIndex: %v\n", rf.me, rf.currentTerm, server, reply.XIndex)
 					rf.nextIndex[server] = reply.XIndex
 				} else {
-					// DPrintf("[RAFT %v %v][SEND APPEND ENTRIES %v] using first match index for nextIndex: %v\n", rf.me, rf.currentTerm, server, matchingTermIndex)
 					rf.nextIndex[server] = matchingTermIndex
 				}
 			}
@@ -868,9 +864,6 @@ func (rf *Raft) election(startTime time.Time, term int) {
 			return
 		}
 
-		// DPrintf("[RAFT %v %v][ELECTION %v] sending RequestVote to server %v!\n",
-		// 	rf.me, rf.currentTerm, term, i)
-
 		go func(server int, candidateArgs RequestVoteArgs) {
 			var reply RequestVoteReply
 			for !rf.killed() {
@@ -969,7 +962,6 @@ func (rf *Raft) ticker() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 
-	// DPrintf("[Raft %v] starting up...\n", me)
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
