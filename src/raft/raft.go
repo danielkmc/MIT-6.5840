@@ -18,7 +18,6 @@ package raft
 //
 
 import (
-	//	"bytes"
 	"bytes"
 	"log"
 	"math/rand"
@@ -26,7 +25,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	//	"6.5840/labgob"
 	"6.5840/labgob"
 	"6.5840/labrpc"
 )
@@ -82,10 +80,8 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
 	var term int
 	var isleader bool
-	// Your code here (2A).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -101,18 +97,9 @@ func (rf *Raft) GetState() (int, bool) {
 // second argument to persister.Save().
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
-
 // MUST call persist with rf lock already held!
 func (rf *Raft) persist() {
-	// Your code here (2C).
 
-	// Persistent state:
-	// currentTerm
-	// votedFor
-	// log[]
-	// offsetIndex
-
-	// Example:
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
@@ -130,9 +117,7 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Don't need to lock here since we're starting up the Raft, so this won't be ran concurrently
-	// Your code here (2C).
-	// Example:
+
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var currentTerm int = 0
@@ -207,8 +192,6 @@ func (rf *Raft) relaySnapshot(server int) bool {
 	for !rf.killed() {
 		rf.mu.Lock()
 		if !rf.isLeader {
-			// If something changed that caused this snapshot to be irrelevant, then
-			// exit
 			rf.mu.Unlock()
 			return false
 		}
@@ -241,7 +224,6 @@ type InstallSnapshotReply struct {
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
-	// use applyCh to send the snapshot to the service using an ApplyMsg
 	rf.mu.Lock()
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
@@ -265,7 +247,6 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.log[args.LastIncludedIndex-rf.offsetIndex].Term == args.LastIncludedTerm {
 		rf.log = rf.log[args.LastIncludedIndex+1-rf.offsetIndex:]
 	} else {
-		// if the follower's log length is greater, empty our log
 		rf.log = []LogEntry{}
 	}
 	rf.lastIncludedIndex = args.LastIncludedIndex
@@ -617,7 +598,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 // should call killed() to check whether it should stop.
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
-	// Your code here, if desired.
 }
 
 func (rf *Raft) killed() bool {
@@ -842,7 +822,8 @@ func (rf *Raft) election(startTime time.Time, term int) {
 		}(i, args)
 	}
 
-	// Only reaches here if election is still the same
+	// Wait for votes to complete, a new election to start, or for the term to
+	// have changed.
 	voteMu.Lock()
 	for votesReceived < majority && voted != numPeers {
 		if rf.currentTerm != term ||
@@ -877,14 +858,10 @@ func (rf *Raft) election(startTime time.Time, term int) {
 // this server starts an election. There is only one ticker process per server.
 func (rf *Raft) ticker() {
 	for !rf.killed() {
-
-		// Your code here (2A)
-		// Check if a leader election should be started.
 		ms := 500 + (rand.Int63() % 800)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 		rf.mu.Lock()
 		if !rf.isLeader && time.Since(rf.electionTimeout).Milliseconds() > ms {
-			// reset election timer before the start of a new election
 			rf.currentTerm += 1
 			rf.votedFor = rf.me
 			rf.persist()
@@ -911,8 +888,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-
-	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.log = []LogEntry{}
@@ -922,15 +897,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.isLeader = false
 	rf.electionTimeout = time.Now()
 	rf.applyCh = applyCh
-
-	// 2D
 	rf.lastIncludedIndex = 0
 	rf.lastIncludedTerm = 0
 	rf.offsetIndex = 0
 	rf.snapshot = nil
-	// initialize from state persisted before a crash
+
 	rf.readPersist(persister.ReadRaftState())
-	// rf.persist()
 
 	go rf.ticker()
 	go rf.applyEntries()
