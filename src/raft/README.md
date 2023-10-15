@@ -1,9 +1,11 @@
 # Raft
+
 Note: the original template of this codebase is borrowed from [MIT's 6.5840 Distributed Systems course](https://pdos.csail.mit.edu/6.824/).
 
-The main implementation of the Raft consensus protocol is located in `raft.go`, with tests provided by `test_test.go`, which utilizes a modified RPC that can simulate delays, unreliable connections, and disconnects to test the protocol under conditions it needs to be fault tolerant to. 
+The main implementation of the Raft consensus protocol is located in `raft.go`, with tests provided by `test_test.go`, which utilizes a modified RPC that can simulate delays, unreliable connections, and disconnects to test the protocol under conditions it needs to be fault tolerant to.
 
-Each Raft peer has the following state: 
+Each Raft peer has the following state:
+
 ```golang
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
@@ -37,11 +39,13 @@ type Raft struct {
 ```
 
 Each Raft has the following RPCs to accomplish the distributed consensus' goals:
+
 * InstallSnapshot
 * RequestVote
 * AppendEntries
 
 For each Raft peer, they have the following functions to maintain the peer:
+
 * persist
 * readPersist
 * Snapshot
@@ -60,8 +64,36 @@ For each Raft peer, they have the following functions to maintain the peer:
 
 There are some other functions used for the tester such as `Kill()` and `GetState()`.
 
-
 ## RPCs
-The RPCs were designed following the guidelines provided by the original Raft paper's Figure 2, where the various types of servers (Followers, Candidates, Leaders) have their specifications listed. 
+
+The RPCs were designed following the guidelines provided by the original Raft paper's Figure 2, where the various types of servers (Followers, Candidates, Leaders) have their specifications listed.
+
 <img src="raft_figure2.png" width="600">
 
+## Leader, Follower, Candidate, and Server rules
+
+### Candidates
+
+- [ ] Invoke *RequestVote* RPC
+- [ ] Starts elections
+  - [ ] Increment currentTerm
+  - [ ] Votes for self
+  - [ ] Reset election timer
+  - [ ] Send *RequestVote* RPC's to all other servers
+- [ ] Receiving majority votes from servers converts this to **Leader**
+- [ ] Receiving *AppendEntries* RPC from new leaeder triggers conversion to **Follower**
+- [ ] Election timeout elapsing starts new election
+
+### Followers
+
+- [ ] Respond to RPCs from **Candidates** and **Leaders**
+- [ ] Election timeout elapsing triggers conversion to **Candidate**
+
+### Leaders
+
+- [ ] Once elected, send empty *AppendEntries* RPCs (hearbeat) to each server as heartbeats
+- [ ] Append commands received from client to local log and respond to client after entry applied to state machine
+- [ ] If last log index $\ge$ nextIndex for a follower, send *AppendEntries* RPC with log entries starting at nextIndex
+  - [ ] If successful: update nextIndex and matchIndex for follower
+  - [ ] If *ApendEntries* fails due to log inconsistency, decrement nextIndex and retry
+- [ ] If there exists an N where N > commitIndex, a majority of matchIndex[i] $\ge$ N, and log[N].term == currentTerm, then set commitIndex = N
