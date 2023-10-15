@@ -703,7 +703,6 @@ func (rf *Raft) nLogAgreement(server int) {
 
 		if serverNextIndex < rf.offsetIndex {
 			rf.mu.Unlock()
-
 			if !rf.relaySnapshots(server) {
 				return
 			} else {
@@ -840,10 +839,9 @@ func (rf *Raft) election(startTime time.Time, term int) {
 	args := RequestVoteArgs{}
 	args.Term = rf.currentTerm
 	args.CandidateId = rf.me
-	if len(rf.log) == 0 {
-		args.LastLogIndex = rf.lastIncludedIndex
-		args.LastLogTerm = rf.lastIncludedTerm
-	} else {
+	args.LastLogIndex = rf.lastIncludedIndex
+	args.LastLogTerm = rf.lastIncludedTerm
+	if len(rf.log) != 0 {
 		args.LastLogIndex = len(rf.log) - 1 + rf.offsetIndex
 		args.LastLogTerm = rf.log[len(rf.log)-1].Term
 	}
