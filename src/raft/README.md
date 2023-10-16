@@ -1,6 +1,5 @@
 # Raft
 
-
 This is an implementation of the Raft distributed consensus protocol, providing fault tolerance without sacrificing much performance. The Raft protocol provides an API for users to build an application on incorporating multiple servers.
 
 An visualization for Raft can be found here: https://raft.github.io/
