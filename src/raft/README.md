@@ -9,6 +9,7 @@ An visualization for Raft can be found here: https://raft.github.io/
 At a high-level perspective, Raft provides each server with three different states: Leader, Candidate, and Follower. While Raft is operating normally, where a simple majority of all servers are still running, there is at most one Leader and the rest are Followers. Candidates are Follower servers who have not heard from the Leader for a period of time, and request votes from their peers. If a Candidate obtains a simple majority of the votes, then they are promoted to Leader status. It's during this time, where there is a Leader and majority of servers in contact, that Raft is able to replicate its log from Leader to Followers.
 
 ## Design
+
 Each Raft peer has the following state:
 
 ```golang
