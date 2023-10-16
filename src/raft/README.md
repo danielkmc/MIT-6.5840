@@ -1,9 +1,15 @@
 # Raft
 
-Note: the original template of this codebase is borrowed from [MIT's 6.5840 Distributed Systems course](https://pdos.csail.mit.edu/6.824/).
 
-The main implementation of the Raft consensus protocol is located in `raft.go`, with tests provided by `test_test.go`, which utilizes a modified RPC that can simulate delays, unreliable connections, and disconnects to test the protocol under conditions it needs to be fault tolerant to.
+This is an implementation of the Raft distributed consensus protocol, providing fault tolerance without sacrificing much performance. The Raft protocol provides an API for users to build an application on incorporating multiple servers.
 
+An visualization for Raft can be found here: https://raft.github.io/
+
+## What is it doing?
+
+At a high-level perspective, Raft provides each server with three different states: Leader, Candidate, and Follower. While Raft is operating normally, where a simple majority of all servers are still running, there is at most one Leader and the rest are Followers. Candidates are Follower servers who have not heard from the Leader for a period of time, and request votes from their peers. If a Candidate obtains a simple majority of the votes, then they are promoted to Leader status. It's during this time, where there is a Leader and majority of servers in contact, that Raft is able to replicate its log from Leader to Followers.
+
+## Design
 Each Raft peer has the following state:
 
 ```golang
@@ -44,25 +50,25 @@ Each Raft has the following RPCs to accomplish the distributed consensus' goals:
 * RequestVote
 * AppendEntries
 
+as well as functions to send those RPCs:
+
+* sendInstallSnapshot
+* sendRequestVote
+* sendAppendEntries
+
 For each Raft peer, they have the following functions to maintain the peer:
 
 * persist
 * readPersist
 * Snapshot
 * relaySnapshots
-* sendInstallSnapshot
-* sendRequestVote
 * applyEntries
-* sendAppendEntries
 * updateCommitIndex
 * logAgreement
-* heartbeat
 * election
 * ticker
 * Start
 * killed
-
-There are some other functions used for the tester such as `Kill()` and `GetState()`.
 
 ## RPCs
 
@@ -70,30 +76,6 @@ The RPCs were designed following the guidelines provided by the original Raft pa
 
 <img src="raft_figure2.png" width="600">
 
-## Leader, Follower, Candidate, and Server rules
 
-### Candidates
 
-- [ ] Invoke *RequestVote* RPC
-- [ ] Starts elections
-  - [ ] Increment currentTerm
-  - [ ] Votes for self
-  - [ ] Reset election timer
-  - [ ] Send *RequestVote* RPC's to all other servers
-- [ ] Receiving majority votes from servers converts this to **Leader**
-- [ ] Receiving *AppendEntries* RPC from new leaeder triggers conversion to **Follower**
-- [ ] Election timeout elapsing starts new election
-
-### Followers
-
-- [ ] Respond to RPCs from **Candidates** and **Leaders**
-- [ ] Election timeout elapsing triggers conversion to **Candidate**
-
-### Leaders
-
-- [ ] Once elected, send empty *AppendEntries* RPCs (hearbeat) to each server as heartbeats
-- [ ] Append commands received from client to local log and respond to client after entry applied to state machine
-- [ ] If last log index $\ge$ nextIndex for a follower, send *AppendEntries* RPC with log entries starting at nextIndex
-  - [ ] If successful: update nextIndex and matchIndex for follower
-  - [ ] If *ApendEntries* fails due to log inconsistency, decrement nextIndex and retry
-- [ ] If there exists an N where N > commitIndex, a majority of matchIndex[i] $\ge$ N, and log[N].term == currentTerm, then set commitIndex = N
+Note: the original template of this codebase is borrowed from [MIT's 6.5840 Distributed Systems course](https://pdos.csail.mit.edu/6.824/).
