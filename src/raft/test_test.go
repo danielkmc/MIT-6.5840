@@ -59,28 +59,22 @@ func TestReElection2A(t *testing.T) {
 
 	cfg.begin("Test (2A): election after network failure")
 
-	DPrintf("[TESTS] first check\n")
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
-	DPrintf("[TESTS] disconnected leader %v\n", leader1)
 	cfg.checkOneLeader()
-	DPrintf("[TESTS] reached 1\n")
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
-	DPrintf("[TESTS] reconnected leader %v\n", leader1)
 	leader2 := cfg.checkOneLeader()
-	DPrintf("[TESTS] reached 2\n")
 
 	// if there's no quorum, no new leader should
 	// be elected.
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
-	DPrintf("[TESTS] disconnected %v and %v\n", leader2, (leader2+1)%servers)
 	time.Sleep(2 * RaftElectionTimeout)
 
 	// check that the one connected server
@@ -89,14 +83,11 @@ func TestReElection2A(t *testing.T) {
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
-	DPrintf("[TESTS] reconnected server %v\n", (leader2+1)%servers)
 	cfg.checkOneLeader()
-	DPrintf("[TESTS] reached 3\n")
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
-	DPrintf("[TESTS] reached 4\n")
 	cfg.end()
 }
 
@@ -700,12 +691,9 @@ func TestPersist12C(t *testing.T) {
 		cfg.connect(i)
 	}
 
-	DPrintf("[TEST] Reconnected all servers!!!!!!!!!!!!!!!!!!!!!!\n")
-
 	cfg.one(12, servers, true)
 
 	leader1 := cfg.checkOneLeader()
-	DPrintf("[TEST] DISCONNECTING LEADER1 %v!!!!!!!!!!!!!!!!!!!!!\n", leader1)
 	cfg.disconnect(leader1)
 	cfg.start1(leader1, cfg.applier)
 	cfg.connect(leader1)
@@ -713,14 +701,12 @@ func TestPersist12C(t *testing.T) {
 	cfg.one(13, servers, true)
 
 	leader2 := cfg.checkOneLeader()
-	DPrintf("[TEST] DISCONNECTING LEADER2 %v!!!!!!!!!!!!!!!!!!!!!\n", leader2)
 
 	cfg.disconnect(leader2)
 	cfg.one(14, servers-1, true)
 	cfg.start1(leader2, cfg.applier)
 	cfg.connect(leader2)
 
-	DPrintf("[TEST] WAITING FOR LEADER2 %v TO JOIN!!!!!!!!!!!!!!!!!!!!!\n", leader2)
 	cfg.wait(4, servers, -1) // wait for leader2 to join before killing i3
 
 	i3 := (cfg.checkOneLeader() + 1) % servers
@@ -728,7 +714,6 @@ func TestPersist12C(t *testing.T) {
 	cfg.one(15, servers-1, true)
 	cfg.start1(i3, cfg.applier)
 	cfg.connect(i3)
-	DPrintf("[TEST] Last append!!!!!!!!!!!!!!!!!!!!!\n")
 
 	cfg.one(16, servers, true)
 
@@ -744,7 +729,6 @@ func TestPersist22C(t *testing.T) {
 
 	index := 1
 	for iters := 0; iters < 5; iters++ {
-		DPrintf("[TEST] ITERATION %v------------------------------------------------------------\n", iters)
 		cfg.one(10+index, servers, true)
 		index++
 
@@ -916,7 +900,6 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
-		DPrintf("[TEST] ITERATION %v-------------------------------------------------\n", iters)
 		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
@@ -1123,12 +1106,9 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	defer cfg.cleanup()
 
 	cfg.begin(name)
-	DPrintf("[TEST] CFG BEGIN complete!\n")
 	cfg.one(rand.Int(), servers, true)
-	DPrintf("[TEST] CFG ONE complete!\n")
 	leader1 := cfg.checkOneLeader()
 
-	DPrintf("[TEST] BEFORE FOR LOOP\n")
 	for i := 0; i < iters; i++ {
 		victim := (leader1 + 1) % servers
 		sender := leader1
@@ -1137,22 +1117,17 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			victim = leader1
 		}
 
-		DPrintf("[TEST] ITERATION %v----------------- VICTIM: %v | SENDER: %v\n", i, victim, sender)
-
 		if disconnect {
-			DPrintf("[TEST] ------------------ DISCONNECTING %v ------------------\n", victim)
 			cfg.disconnect(victim)
 			cfg.one(rand.Int(), servers-1, true)
 		}
 		if crash {
-			DPrintf("[TEST] ------------------ CRASHING %v ------------------\n", victim)
 			cfg.crash1(victim)
 			cfg.one(rand.Int(), servers-1, true)
 		}
 
 		// perhaps send enough to get a snapshot
 		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		DPrintf("[TEST] SENDING %v COMMANDS TO LEADER!\n", nn)
 		for i := 0; i < nn; i++ {
 			cfg.rafts[sender].Start(rand.Int())
 		}
@@ -1173,13 +1148,11 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		if disconnect {
 			// reconnect a follower, who maybe behind and
 			// needs to rceive a snapshot to catch up.
-			DPrintf("[TEST] ------------------ RECONNECTING %v ------------------\n", victim)
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
 		}
 		if crash {
-			DPrintf("[TEST] ------------------ RECOVERING FROM CRASH %v ------------------\n", victim)
 			cfg.start1(victim, cfg.applierSnap)
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
@@ -1268,37 +1241,31 @@ func TestSnapshotInit2D(t *testing.T) {
 	}
 
 	// crash all
-	DPrintf("--------------------------------------------------------------------[TEST] CRASHED ALL 1--------------\n")
 	for i := 0; i < servers; i++ {
 		cfg.crash1(i)
 	}
 
 	// revive all
-	DPrintf("--------------------------------------------------------------------[TEST] REVIVED ALL 1--------------\n")
 	for i := 0; i < servers; i++ {
 		cfg.start1(i, cfg.applierSnap)
 		cfg.connect(i)
 	}
 
 	// a single op, to get something to be written back to persistent storage.
-	DPrintf("--------------------------------------------------------------------[TEST] ONE OP 1--------------\n")
 	cfg.one(rand.Int(), servers, true)
 
-	DPrintf("--------------------------------------------------------------------[TEST] CRASHED ALL 2--------------\n")
 	// crash all
 	for i := 0; i < servers; i++ {
 		cfg.crash1(i)
 	}
 
 	// revive all
-	DPrintf("--------------------------------------------------------------------[TEST] REVIVED ALL 2--------------\n")
 	for i := 0; i < servers; i++ {
 		cfg.start1(i, cfg.applierSnap)
 		cfg.connect(i)
 	}
 
 	// do another op to trigger potential bug
-	DPrintf("--------------------------------------------------------------------[TEST] ONE OP 2--------------\n")
 	cfg.one(rand.Int(), servers, true)
 	cfg.end()
 }

@@ -443,13 +443,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// Case 3: follower's log is too short:
 		// nextIndex = XLen
 		followerPrevLogIndex := args.PrevLogIndex
-		prevLogIndexNotInLog := followerPrevLogIndex == rf.lastIncludedIndex &&
-			rf.lastIncludedTerm != args.PrevLogTerm
-		prevLogIndexInLog := followerPrevLogIndex != rf.lastIncludedIndex &&
-			rf.log[followerPrevLogIndex-rf.offsetIndex].Term != args.PrevLogTerm
 
 		if leaderLogLength <= followerPrevLogIndex ||
-			prevLogIndexNotInLog || prevLogIndexInLog {
+			(followerPrevLogIndex == rf.lastIncludedIndex &&
+				rf.lastIncludedTerm != args.PrevLogTerm) ||
+			(followerPrevLogIndex != rf.lastIncludedIndex &&
+				rf.log[followerPrevLogIndex-rf.offsetIndex].Term != args.PrevLogTerm) {
 
 			reply.XLen = leaderLogLength
 			reply.XIndex = followerPrevLogIndex
